@@ -265,19 +265,78 @@ async function processAttachments({
   const inboxDir = getInboxDir(account);
   ensureDir(inboxDir);
 
-  const imageAttachments = attachments.filter((a) => a.type === "image");
+  const imageAttachments = attachments.filter((a) => a.type === "image" || a.type === "photo");
   const fileAttachments = attachments.filter(
-    (a) => a.type !== "image" && a.type !== "inline_keyboard" && a.type !== "share",
+    (a) => a.type !== "image" && a.type !== "photo" && a.type !== "inline_keyboard" && a.type !== "share",
   );
 
-  // 1. Process images for inline base64 vision
-  for (const att of imageAttachments) {
+  // 1. Process images for inline base64 vision AND save to inbox
+  for (let i = 0; i < imageAttachments.length; i++) {
+    const att = imageAttachments[i];
     const url = att.payload?.url;
-    if (!url) continue;
-    const buf = await downloadFile(account.token, url);
+    const token = att.payload?.token;
+    if (!url && !token) continue;
+
+    let buf: Buffer | null = null;
+    if (url) {
+      buf = await downloadFile(account.token, url);
+    }
+    if (!buf && token) {
+      const endpoints = [
+        `https://platform-api2.max.ru/attachments/${token}`,
+        `https://platform-api2.max.ru/files/${token}`,
+      ];
+      for (const ep of endpoints) {
+        buf = await downloadFile(account.token, ep);
+        if (buf) break;
+      }
+    }
     if (!buf) continue;
     const mimeType = detectMimeType(buf);
     images.push({ data: buf.toString("base64"), mimeType });
+
+    // Also save image to inbox so it is accessible as a local file and surfaced in message attachments
+    const declaredName =
+      safeFilename(att.filename) ||
+      safeFilename(att.payload?.filename) ||
+      safeFilename(att.payload?.name);
+    const ext =
+      declaredName && /\.[a-zA-Z0-9]{1,8}$/.test(declaredName)
+        ? ""
+        : extFromMime(mimeType) || ".jpg";
+
+    const fwdPrefix = isForwarded ? "fwd_" : "";
+    const filename = fwdPrefix + (declaredName || `max_image_${messageId}_${i}${ext}`);
+    const filePath = join(inboxDir, filename);
+
+    let finalPath = filePath;
+    let n = 1;
+    while (existsSync(finalPath)) {
+      const dot = filename.lastIndexOf(".");
+      const stem = dot >= 0 ? filename.slice(0, dot) : filename;
+      const ext2 = dot >= 0 ? filename.slice(dot) : "";
+      finalPath = join(inboxDir, `${stem}_${n}${ext2}`);
+      n++;
+    }
+
+    try {
+      writeFileSync(finalPath, buf);
+      files.push({
+        path: finalPath,
+        filename: finalPath.split(/[/\\]/).pop() || filename,
+        mimeType: mimeType || "image/jpeg",
+        size: buf.length,
+        attachmentType: "image",
+        isForwarded: !!isForwarded,
+      });
+      log?.info?.(
+        `[openclaw-max] Saved image attachment: ${finalPath} (${buf.length} bytes, ${mimeType})`,
+      );
+    } catch (err) {
+      log?.error?.(
+        `[openclaw-max] Failed to save image to ${finalPath}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 
   // 2. Process documents, audio, voice, video to inbox

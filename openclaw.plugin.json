@@ -1,10 +1,12 @@
 {
   "id": "max",
   "kind": "channel",
-  "channels": ["max"],
+  "channels": [
+    "max"
+  ],
   "name": "MAX",
   "description": "MAX messenger (max.ru) channel plugin for OpenClaw",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "configSchema": {
     "type": "object",
     "additionalProperties": true,
@@ -13,17 +15,46 @@
         "type": "object",
         "additionalProperties": true,
         "properties": {
-          "enabled": { "type": "boolean" },
-          "token": { "type": "string" },
-          "dmPolicy": { "type": "string" },
-          "allowFrom": { "type": "array", "items": { "type": "string" } },
-          "groupPolicy": { "type": "string" },
-          "groupAllowFrom": { "type": "array", "items": { "type": "string" } },
-          "webhookUrl": { "type": "string" },
-          "webhookSecret": { "type": "string" },
-          "httpProxy": { "type": "string" },
-          "accounts": { "type": "object", "additionalProperties": true },
-          "defaultAccount": { "type": "string" }
+          "enabled": {
+            "type": "boolean"
+          },
+          "token": {
+            "type": "string"
+          },
+          "dmPolicy": {
+            "type": "string"
+          },
+          "allowFrom": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "groupPolicy": {
+            "type": "string"
+          },
+          "groupAllowFrom": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "webhookUrl": {
+            "type": "string"
+          },
+          "webhookSecret": {
+            "type": "string"
+          },
+          "httpProxy": {
+            "type": "string"
+          },
+          "accounts": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "defaultAccount": {
+            "type": "string"
+          }
         }
       }
     }
@@ -44,21 +75,33 @@
           },
           "dmPolicy": {
             "type": "string",
-            "enum": ["open", "allowlist", "closed"],
+            "enum": [
+              "open",
+              "allowlist",
+              "closed"
+            ],
             "default": "allowlist"
           },
           "allowFrom": {
             "type": "array",
-            "items": { "type": "string" }
+            "items": {
+              "type": "string"
+            }
           },
           "groupPolicy": {
             "type": "string",
-            "enum": ["open", "allowlist", "closed"],
+            "enum": [
+              "open",
+              "allowlist",
+              "closed"
+            ],
             "default": "allowlist"
           },
           "groupAllowFrom": {
             "type": "array",
-            "items": { "type": "string" }
+            "items": {
+              "type": "string"
+            }
           },
           "webhookUrl": {
             "type": "string"
