@@ -40,47 +40,52 @@ const CHANNEL_ID = "max";
 const activeTypingStops = new Map<string, () => void>();
 let typingStopSeq = 0;
 
+const MaxAccountSchema = z
+  .object({
+    token: z.string().optional().describe("MAX Bot API token (from business.max.ru)"),
+    enabled: z.boolean().optional().default(true).describe("Enable or disable this channel"),
+    dmPolicy: z
+      .enum(["open", "allowlist", "closed"])
+      .optional()
+      .default("allowlist")
+      .describe("Who can send DMs"),
+    allowFrom: z
+      .array(z.string())
+      .optional()
+      .describe("Allowed MAX user IDs (when dmPolicy=allowlist)"),
+    groupPolicy: z
+      .enum(["open", "allowlist", "closed"])
+      .optional()
+      .default("allowlist")
+      .describe("Group chat access policy"),
+    groupAllowFrom: z
+      .array(z.string())
+      .optional()
+      .describe("Allowed MAX user IDs in group chats"),
+    webhookUrl: z
+      .string()
+      .optional()
+      .describe("Webhook URL for production mode (optional, uses long polling if not set)"),
+    webhookSecret: z
+      .string()
+      .optional()
+      .describe("Webhook secret for verifying MAX requests"),
+    inboxDir: z
+      .string()
+      .optional()
+      .describe("Custom inbox directory for downloaded files"),
+    httpProxy: z
+      .string()
+      .optional()
+      .describe("HTTP(S) proxy URL for MAX API traffic"),
+  })
+  .passthrough();
+
 const MaxConfigSchema = buildChannelConfigSchema(
-  z
-    .object({
-      token: z.string().optional().describe("MAX Bot API token (from business.max.ru)"),
-      enabled: z.boolean().optional().default(true).describe("Enable or disable this channel"),
-      dmPolicy: z
-        .enum(["open", "allowlist", "closed"])
-        .optional()
-        .default("allowlist")
-        .describe("Who can send DMs"),
-      allowFrom: z
-        .array(z.string())
-        .optional()
-        .describe("Allowed MAX user IDs (when dmPolicy=allowlist)"),
-      groupPolicy: z
-        .enum(["open", "allowlist", "closed"])
-        .optional()
-        .default("allowlist")
-        .describe("Group chat access policy"),
-      groupAllowFrom: z
-        .array(z.string())
-        .optional()
-        .describe("Allowed MAX user IDs in group chats"),
-      webhookUrl: z
-        .string()
-        .optional()
-        .describe("Webhook URL for production mode (optional, uses long polling if not set)"),
-      webhookSecret: z
-        .string()
-        .optional()
-        .describe("Webhook secret for verifying MAX requests"),
-      inboxDir: z
-        .string()
-        .optional()
-        .describe("Custom inbox directory for downloaded files"),
-      httpProxy: z
-        .string()
-        .optional()
-        .describe("HTTP(S) proxy URL for MAX API traffic"),
-    })
-    .passthrough(),
+  MaxAccountSchema.extend({
+    accounts: z.record(z.string(), MaxAccountSchema.optional()).optional(),
+    defaultAccount: z.string().optional(),
+  }).passthrough(),
 );
 
 // Track active webhook route unregisters per account

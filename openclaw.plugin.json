@@ -7,10 +7,11 @@
   "version": "1.0.0",
   "configSchema": {
     "type": "object",
-    "additionalProperties": false,
+    "additionalProperties": true,
     "properties": {
       "max": {
         "type": "object",
+        "additionalProperties": true,
         "properties": {
           "enabled": { "type": "boolean" },
           "token": { "type": "string" },
@@ -20,7 +21,9 @@
           "groupAllowFrom": { "type": "array", "items": { "type": "string" } },
           "webhookUrl": { "type": "string" },
           "webhookSecret": { "type": "string" },
-          "httpProxy": { "type": "string" }
+          "httpProxy": { "type": "string" },
+          "accounts": { "type": "object", "additionalProperties": true },
+          "defaultAccount": { "type": "string" }
         }
       }
     }
@@ -65,9 +68,16 @@
           },
           "httpProxy": {
             "type": "string"
+          },
+          "accounts": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "defaultAccount": {
+            "type": "string"
           }
         },
-        "additionalProperties": false
+        "additionalProperties": true
       },
       "uiHints": {
         "token": {
