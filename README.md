@@ -1,21 +1,40 @@
-# @olegbalbekov/openclaw-max
+# @synthet1x/openclaw-max
 
 MAX messenger (max.ru) channel plugin for [OpenClaw](https://github.com/openclaw/openclaw).
+
+Production-ready connector with full inbound/outbound attachment support (documents, audio/voice messages, video, images), quote/forward unwrapping (`msg.link`), automatic webhook deduplication, and out-of-the-box Long Polling for home setups.
+
+---
+
+## Credits & Acknowledgments
+
+This project is a community-driven fork of the original [@olegbalbekov/openclaw-max](https://github.com/olegbalbekov/openclaw-max) by [Oleg Balbekov](https://github.com/olegbalbekov).
+
+### What's improved in this fork:
+1. **Full attachment support:** Handles arbitrary documents (PDF, DOCX, XLSX, ZIP), audio files, and voice notes — not just images.
+2. **Audio & Voice notes:** Automatic download, MIME detection, and forwarding to OpenClaw STT/Whisper for voice interactions.
+3. **Forward & reply unwrap (`unwrapLink`):** Extracts quotes, original senders, and nested attachments from forwarded messages.
+4. **Automatic webhook deduplication:** In-memory TTL cache preventing double processing from network retries.
+5. **Cross-platform:** Tested and verified on both Linux and Windows environments.
+6. **Modern OpenClaw manifest:** Includes `channelConfigs` and `uiHints` to avoid gateway validation warnings.
+
+---
 
 ## Features
 
 - DM and group chat support
-- Long polling (default) and webhook modes
+- Long polling (default, works without public IP/domain) and webhook modes
 - Streaming replies with typing indicator
-- Media sending and receiving (images)
+- Full media sending and receiving (images, audio, video, documents)
 - Allowlist-based access control
+- Modern OpenClaw Channel Plugin architecture
 
 ## Installation
 
 ### 1. Install the plugin
 
 ```bash
-openclaw plugins install @olegbalbekov/openclaw-max
+openclaw plugins install @synthet1x/openclaw-max
 ```
 
 Or manually — clone/copy the plugin directory into `~/.openclaw/extensions/max/` and add to your config:
@@ -93,60 +112,6 @@ Should show: `MAX default: enabled, dm:allowlist, allow:YOUR_USER_ID`
 | `webhookSecret` | string | — | Webhook secret for request verification |
 | `httpProxy` | string | — | Optional HTTP(S) proxy for MAX API traffic, e.g. `http://user:pass@host:port` |
 
-## MAX API migration (July 2026)
-
-As of **2026-07-19** MAX decommissioned the legacy `platform-api.max.ru` host. This
-plugin (v0.5.0+) talks to the new `platform-api2.max.ru` endpoint. That host serves
-a TLS chain anchored on the **Russian Trusted Root CA (Минцифры)**, which is not in
-Node's bundled certificate store — so the plugin ships that CA and trusts it
-automatically (on top of the default roots). No manual `NODE_EXTRA_CA_CERTS` setup
-is required. Bot tokens are sent via the `Authorization` header, as the new API
-mandates.
-
-If your gateway has no direct route to `platform-api2.max.ru`, set `httpProxy` to
-tunnel all MAX traffic through a proxy.
-
-## Webhook mode (optional)
-
-For production, configure a webhook instead of long polling:
-
-```json5
-{
-  channels: {
-    max: {
-      token: "YOUR_BOT_TOKEN",
-      webhookUrl: "https://your-domain.com/api/channels/max/webhook",
-      webhookSecret: "your-secret"
-    }
-  }
-}
-```
-
-## Troubleshooting
-
-**Plugin not starting / `channels.max: unknown channel id`**
-
-- Make sure `plugins.allow` is NOT set (or includes `"max"` explicitly)
-
-**Telegram stops working after adding MAX**
-
-- Do NOT set `plugins.allow: ["max"]` — this blocks all other plugins including Telegram
-- Use `plugins.entries.max.enabled: true` instead
-
-**Gateway won't start**
-
-- Validate config JSON: `python3 -c "import json; json.load(open('~/.openclaw/openclaw.json'))"`
-- Check logs: `journalctl -u openclaw -n 50`
-
-## Supported by
-
-Supported by [Evrone](https://evrone.com/?utm_source=openclaw-max) — a software development company that builds products and helps companies improve their development processes.
-
-<a href="https://evrone.com/?utm_source=openclaw-max">
-  <img src="https://user-images.githubusercontent.com/417688/34437029-dbfe4ee6-ecab-11e7-9d80-2b274b4149b3.png"
-       alt="Sponsored by Evrone" width="231" />
-</a>
-
 ## License
 
-MIT © [Oleg Balbekov](https://github.com/olegbalbekov)
+MIT © [Oleg Balbekov](https://github.com/olegbalbekov) & [Boris Orlyuk](https://github.com/Synthet1x)
