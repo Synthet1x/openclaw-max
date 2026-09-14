@@ -10,10 +10,12 @@ import { setMaxRuntime, getMaxRuntime } from "./src/runtime.js";
 export { createMaxPlugin as maxPlugin };
 export { setMaxRuntime, getMaxRuntime };
 
-export default defineChannelPluginEntry({
+const entry: any = defineChannelPluginEntry({
   id: "max",
   name: "MAX",
   description: "MAX messenger (max.ru) channel plugin for OpenClaw",
   plugin: createMaxPlugin(),
   setRuntime: setMaxRuntime,
 });
+
+export default entry;

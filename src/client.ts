@@ -261,7 +261,7 @@ export async function getUploadUrl(token: string, type: "image" | "video" | "aud
 export async function uploadFile(uploadUrl: string, buffer: Buffer, mimeType: string, filename: string): Promise<{ token: string } | null> {
   try {
     const form = new FormData();
-    form.append("data", new Blob([buffer], { type: mimeType }), filename);
+    form.append("data", new Blob([new Uint8Array(buffer)], { type: mimeType }), filename);
     const res = await fetch(uploadUrl, {
       method: "POST",
       body: form,
@@ -283,39 +283,43 @@ export async function uploadFile(uploadUrl: string, buffer: Buffer, mimeType: st
 }
 
 /**
- * Отправить сообщение с изображением в DM.
+ * Отправить сообщение с вложением (image, video, audio, file) в DM или чат.
  */
-export async function sendDmWithImage(token: string, userId: number, text: string, imageToken: string): Promise<string | null> {
+export async function sendMessageWithAttachment(
+  token: string,
+  target: { user_id?: number; chat_id?: number },
+  text: string,
+  attachmentType: "image" | "video" | "audio" | "file",
+  attachmentToken: string
+): Promise<string | null> {
   try {
     const body: Record<string, unknown> = {
-      attachments: [{ type: "image", payload: { token: imageToken } }],
+      attachments: [{ type: attachmentType, payload: { token: attachmentToken } }],
     };
     if (text) body.text = text;
+    const query: Record<string, string | number> = {};
+    if (target.user_id != null) query.user_id = target.user_id;
+    if (target.chat_id != null) query.chat_id = target.chat_id;
     const res = await maxRequest<{ message?: { body?: { mid?: string } } }>(
-      token, "POST", "/messages", { user_id: userId }, body
+      token, "POST", "/messages", Object.keys(query).length > 0 ? query : undefined, body
     );
     return res?.message?.body?.mid ?? null;
   } catch (err) {
-    console.warn(`[openclaw-max] sendDmWithImage error: ${err instanceof Error ? err.message : err}`);
+    console.warn(`[openclaw-max] sendMessageWithAttachment (${attachmentType}) error: ${err instanceof Error ? err.message : err}`);
     return null;
   }
+}
+
+/**
+ * Отправить сообщение с изображением в DM.
+ */
+export async function sendDmWithImage(token: string, userId: number, text: string, imageToken: string): Promise<string | null> {
+  return sendMessageWithAttachment(token, { user_id: userId }, text, "image", imageToken);
 }
 
 /**
  * Отправить сообщение с изображением в чат.
  */
 export async function sendToChatWithImage(token: string, chatId: number, text: string, imageToken: string): Promise<string | null> {
-  try {
-    const body: Record<string, unknown> = {
-      attachments: [{ type: "image", payload: { token: imageToken } }],
-    };
-    if (text) body.text = text;
-    const res = await maxRequest<{ message?: { body?: { mid?: string } } }>(
-      token, "POST", "/messages", { chat_id: chatId }, body
-    );
-    return res?.message?.body?.mid ?? null;
-  } catch (err) {
-    console.warn(`[openclaw-max] sendToChatWithImage error: ${err instanceof Error ? err.message : err}`);
-    return null;
-  }
+  return sendMessageWithAttachment(token, { chat_id: chatId }, text, "image", imageToken);
 }
