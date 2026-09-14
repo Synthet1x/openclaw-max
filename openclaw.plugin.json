@@ -1,0 +1,108 @@
+{
+  "id": "max",
+  "kind": "channel",
+  "channels": ["max"],
+  "name": "MAX",
+  "description": "MAX messenger (max.ru) channel plugin for OpenClaw",
+  "version": "0.5.1",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "max": {
+        "type": "object",
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "token": { "type": "string" },
+          "dmPolicy": { "type": "string" },
+          "allowFrom": { "type": "array", "items": { "type": "string" } },
+          "groupPolicy": { "type": "string" },
+          "groupAllowFrom": { "type": "array", "items": { "type": "string" } },
+          "webhookUrl": { "type": "string" },
+          "webhookSecret": { "type": "string" },
+          "httpProxy": { "type": "string" }
+        }
+      }
+    }
+  },
+  "channelConfigs": {
+    "max": {
+      "label": "MAX",
+      "description": "MAX messenger (max.ru) channel plugin for OpenClaw",
+      "schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "token": {
+            "type": "string"
+          },
+          "dmPolicy": {
+            "type": "string",
+            "enum": ["open", "allowlist", "closed"],
+            "default": "allowlist"
+          },
+          "allowFrom": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "groupPolicy": {
+            "type": "string",
+            "enum": ["open", "allowlist", "closed"],
+            "default": "allowlist"
+          },
+          "groupAllowFrom": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "webhookUrl": {
+            "type": "string"
+          },
+          "webhookSecret": {
+            "type": "string"
+          },
+          "httpProxy": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "uiHints": {
+        "token": {
+          "label": "MAX Bot Token",
+          "help": "MAX Bot API token from business.max.ru."
+        },
+        "dmPolicy": {
+          "label": "DM Policy",
+          "help": "Direct message access control: open, allowlist, or closed."
+        },
+        "allowFrom": {
+          "label": "Allowed User IDs",
+          "help": "MAX user IDs allowed to send DMs (when dmPolicy=allowlist)."
+        },
+        "groupPolicy": {
+          "label": "Group Policy",
+          "help": "Group chat access control: open, allowlist, or closed."
+        },
+        "groupAllowFrom": {
+          "label": "Allowed Group User IDs",
+          "help": "MAX user IDs allowed in group chats (when groupPolicy=allowlist)."
+        },
+        "webhookUrl": {
+          "label": "Webhook URL",
+          "help": "Optional webhook URL. Uses long polling if not set."
+        },
+        "webhookSecret": {
+          "label": "Webhook Secret",
+          "help": "Optional secret for webhook request verification."
+        },
+        "httpProxy": {
+          "label": "HTTP Proxy",
+          "help": "Optional HTTP(S) proxy for MAX API traffic, e.g. http://user:pass@host:port."
+        }
+      }
+    }
+  }
+}

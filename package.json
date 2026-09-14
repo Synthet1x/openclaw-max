@@ -1,0 +1,75 @@
+{
+  "name": "@synthet1x/openclaw-max",
+  "version": "0.6.0",
+  "description": "MAX messenger (max.ru) channel plugin for OpenClaw with full attachment, audio/voice, unwrapLink, and long-polling support",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "openclaw.plugin.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src index.ts"
+  },
+  "peerDependencies": {
+    "openclaw": "*"
+  },
+  "devDependencies": {
+    "openclaw": ">=2026.3.24",
+    "typescript": "^5.9.3"
+  },
+  "keywords": [
+    "openclaw",
+    "openclaw-plugin",
+    "max",
+    "max.ru",
+    "messenger",
+    "chatbot",
+    "channel"
+  ],
+  "author": "Boris Orlyuk <bo@i-rise.ru>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Synthet1x/openclaw-max.git"
+  },
+  "homepage": "https://github.com/Synthet1x/openclaw-max",
+  "bugs": {
+    "url": "https://github.com/Synthet1x/openclaw-max/issues"
+  },
+  "openclaw": {
+    "extensions": [
+      "./dist/index.js"
+    ],
+    "channel": {
+      "id": "max",
+      "label": "MAX",
+      "selectionLabel": "MAX (Bot API)",
+      "docsPath": "/channels/max",
+      "docsLabel": "max",
+      "blurb": "Connect OpenClaw to MAX messenger via Bot API. Supports DMs, group chats, documents, and voice/audio.",
+      "order": 80
+    },
+    "install": {
+      "npmSpec": "@synthet1x/openclaw-max",
+      "localPath": "extensions/max",
+      "defaultChoice": "npm"
+    }
+  },
+  "dependencies": {
+    "undici": "^7.24.4",
+    "zod": "^4.3.6"
+  }
+}
