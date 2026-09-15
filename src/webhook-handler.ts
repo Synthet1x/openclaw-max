@@ -1,3 +1,4 @@
+import { homedir } from "node:os";
 /**
  * Inbound webhook and long-polling update handler for MAX Bot API events.
  * Handles messages, forwards, replies, and downloads all media types (files, audio, voice, images).
@@ -42,7 +43,7 @@ function isDuplicate(messageId: string): boolean {
 function getInboxDir(account: ResolvedMaxAccount): string {
   const custom = account.inboxDir || process.env.MAX_INBOX_DIR;
   if (custom) return custom;
-  return join(process.cwd(), "inbox", "max");
+  return join(homedir(), ".openclaw", "media", "inbound");
 }
 
 function ensureDir(dir: string) {

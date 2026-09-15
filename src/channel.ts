@@ -303,6 +303,8 @@ async function deliverMessage(
     CommandAuthorized: true,
     MediaPath: files && files.length === 1 ? files[0].path : undefined,
     MediaPaths: files && files.length > 1 ? files.map((f) => f.path) : undefined,
+    MediaType: files && files.length === 1 ? files[0].mimeType : undefined,
+    MediaTypes: files && files.length > 1 ? files.map((f) => f.mimeType) : undefined,
   });
 
   const { onPartialToken, deliver } = createStreamingDeliver(
