@@ -374,12 +374,17 @@ async function processAttachments({
       safeFilename(att.filename) ||
       safeFilename(att.payload?.filename) ||
       safeFilename(att.payload?.name);
-    const mime = att.mime_type || att.payload?.mime_type || att.payload?.mime || null;
+    let mime = att.mime_type || att.payload?.mime_type || att.payload?.mime || null;
+    const isAudioType = att.type === "audio" || att.type === "voice";
+    if (isAudioType && (!mime || mime === "application/octet-stream")) {
+      mime = "audio/ogg";
+    }
+
     const ext =
       declaredName && /\.[a-zA-Z0-9]{1,8}$/.test(declaredName)
         ? ""
         : extFromMime(mime) ||
-          (att.type === "audio" ? ".ogg" : att.type === "video" ? ".mp4" : "");
+          (isAudioType ? ".ogg" : att.type === "video" ? ".mp4" : "");
 
     const fwdPrefix = isForwarded ? "fwd_" : "";
     const filename = fwdPrefix + (declaredName || `max_${messageId}_${i}${ext}`);
@@ -400,9 +405,9 @@ async function processAttachments({
       files.push({
         path: finalPath,
         filename: finalPath.split(/[/\\]/).pop() || filename,
-        mimeType: mime || (att.type === "audio" ? "audio/ogg" : "application/octet-stream"),
+        mimeType: mime || (isAudioType ? "audio/ogg" : "application/octet-stream"),
         size: buf.length,
-        attachmentType: att.type,
+        attachmentType: isAudioType ? "audio" : att.type,
         isForwarded: !!isForwarded,
       });
       log?.info?.(

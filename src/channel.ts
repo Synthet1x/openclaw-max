@@ -618,7 +618,7 @@ async function startWebhookMode(ctx: any, account: ResolvedMaxAccount, _cfg: unk
   });
 }
 
-// ─── Long polling mode ────────────────────────────────────────────────────────
+// ─── Long polling mode ──────────────────────────��─────────────────────────────
 
 async function startLongPollingMode(
   ctx: any,
@@ -626,55 +626,64 @@ async function startLongPollingMode(
   _cfg: unknown,
   log: any,
 ) {
-  log?.info?.(`[openclaw-max] Starting in long polling mode`);
+  log?.info?.(`[openclaw-max] Starting in long polling mode for account ${account.accountId}`);
 
   const signal: AbortSignal = ctx.abortSignal;
   let marker: number | null | undefined = undefined;
   let consecutiveErrors = 0;
-  const MAX_ERRORS = 5;
 
   while (!signal?.aborted) {
     try {
       const result = await getUpdates(account.token, marker, 30, signal);
       consecutiveErrors = 0;
 
-      if (result.updates.length > 0) {
-        log?.info?.(`[openclaw-max] Received ${result.updates.length} update(s)`);
-        const rt = getMaxRuntime(); const currentCfg = (typeof rt.config?.current === 'function' ? rt.config.current() : (typeof rt.config?.loadConfig === 'function' ? await rt.config.loadConfig() : _cfg)) ?? _cfg;
-
-        for (const update of result.updates) {
-          await handleUpdate(
-            update,
-            account,
-            async (msg) => {
-              await deliverMessage(msg, account, currentCfg, log);
-              return null;
-            },
-            log,
-          );
-        }
-      }
-
+      // Immediately advance marker to prevent reprocessing loops
       if (result.marker != null) {
         marker = result.marker;
+      }
+
+      if (result.updates.length > 0) {
+        log?.info?.(`[openclaw-max] Received ${result.updates.length} update(s) for ${account.accountId}`);
+        const rt = getMaxRuntime();
+        const currentCfg =
+          (typeof rt.config?.current === "function"
+            ? rt.config.current()
+            : typeof rt.config?.loadConfig === "function"
+              ? await rt.config.loadConfig()
+              : _cfg) ?? _cfg;
+
+        for (const update of result.updates) {
+          if (signal?.aborted) break;
+          try {
+            await handleUpdate(
+              update,
+              account,
+              async (msg) => {
+                await deliverMessage(msg, account, currentCfg, log);
+                return null;
+              },
+              log,
+            );
+          } catch (itemErr) {
+            log?.error?.(
+              `[openclaw-max] Error processing update for ${account.accountId}: ${itemErr instanceof Error ? itemErr.message : String(itemErr)}`,
+            );
+          }
+        }
       }
     } catch (err) {
       if (signal?.aborted) break;
       consecutiveErrors++;
       const errMsg = err instanceof Error ? err.message : String(err);
       log?.warn?.(
-        `[openclaw-max] Long polling error (${consecutiveErrors}/${MAX_ERRORS}): ${errMsg}`,
+        `[openclaw-max] Long polling error (${consecutiveErrors}) for ${account.accountId}: ${errMsg}`,
       );
 
-      if (consecutiveErrors >= MAX_ERRORS) {
-        log?.error?.(`[openclaw-max] Too many consecutive errors, stopping long polling`);
-        break;
-      }
-
-      const delay = Math.min(1000 * Math.pow(2, consecutiveErrors - 1), 30_000);
+      // Never give up — exponential backoff up to 15 seconds
+      const delay = Math.min(1000 * Math.pow(1.5, Math.min(consecutiveErrors - 1, 8)), 15_000);
       await new Promise((r) => setTimeout(r, delay));
     }
   }
 
-  log?.info?.(`[openclaw-max] Long polling stopped for account ${account.accountId}`);
+  log?.info?.(`[openclaw-max] Long polling loop ended for account ${account.accountId}`);
 }
