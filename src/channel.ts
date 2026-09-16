@@ -677,11 +677,33 @@ export function createMaxPlugin(): any {
 
           // Register bot commands menu in MAX Bot API so users see popup menu when typing /
           const defaultCommands = [
-            { name: "models", description: "Показать доступные модели" },
-            { name: "model", description: "Переключить модель (/model provider/model)" },
+            { name: "models", description: "Выбор и переключение моделей" },
+            { name: "model", description: "Текущая модель или смена (/model provider/model)" },
             { name: "new", description: "Начать новую сессию" },
-            { name: "status", description: "Статус агента и контекста" },
-            { name: "help", description: "Справка по командам" },
+            { name: "status", description: "Статус бота, агента и контекста" },
+            { name: "help", description: "Справка по всем командам" },
+            { name: "commands", description: "Полный список команд" },
+            { name: "tools", description: "Список доступных инструментов" },
+            { name: "compact", description: "Сжать контекст диалога" },
+            { name: "think", description: "Глубина размышлений (off/low/medium/high)" },
+            { name: "reset", description: "Сбросить текущую сессию" },
+            { name: "stop", description: "Остановить текущую генерацию" },
+            { name: "restart", description: "Перезапустить OpenClaw" },
+            { name: "usage", description: "Расход токенов и статистика" },
+            { name: "tts", description: "Управление озвучкой (TTS)" },
+            { name: "voice", description: "Выбор голоса для озвучки" },
+            { name: "fast", description: "Режим Fast mode (вкл/выкл)" },
+            { name: "reasoning", description: "Показ хода мыслей (вкл/выкл)" },
+            { name: "verbose", description: "Подробный режим вывода" },
+            { name: "whoami", description: "Показать мой ID в мессенджере" },
+            { name: "context", description: "Информация о текущем контексте" },
+            { name: "tasks", description: "Список фоновых задач" },
+            { name: "subagents", description: "Запущенные субагенты" },
+            { name: "skills", description: "Список доступных навыков" },
+            { name: "weather", description: "Погода и прогноз" },
+            { name: "humanizer", description: "Очеловечивание текстов" },
+            { name: "notion", description: "Интеграция с Notion" },
+            { name: "gog", description: "Google Workspace (диск, почта, календари)" },
           ];
           await setMyCommands(account.token, defaultCommands).catch(() => {});
         } catch (err) {
