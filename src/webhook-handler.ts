@@ -17,7 +17,7 @@ import type {
   InboundFile,
   WebhookDeliverMsg,
 } from "./types.js";
-import { downloadFile } from "./client.js";
+import { downloadFile, sendMessageWithKeyboard } from "./client.js";
 
 const MAX_BODY_BYTES = 10 * 1024 * 1024; // 10 MB
 
@@ -457,6 +457,109 @@ export function createWebhookHandler(deps: WebhookHandlerDeps) {
   };
 }
 
+
+// Interactive menu definitions for commands without arguments (analogous to Telegram native menus)
+const INTERACTIVE_COMMAND_MENUS: Record<string, { title: string; buttons: Array<Array<{ type: "callback"; text: string; payload: string }>> }> = {
+  "/reasoning": {
+    title: "Настройка показа хода мыслей (reasoning):",
+    buttons: [
+      [
+        { type: "callback", text: "Вкл (on)", payload: "/reasoning on" },
+        { type: "callback", text: "Выкл (off)", payload: "/reasoning off" },
+      ],
+      [
+        { type: "callback", text: "Потоково (stream)", payload: "/reasoning stream" },
+      ]
+    ],
+  },
+  "/think": {
+    title: "Глубина размышлений модели (thinking level):",
+    buttons: [
+      [
+        { type: "callback", text: "Off", payload: "/think off" },
+        { type: "callback", text: "Low", payload: "/think low" },
+      ],
+      [
+        { type: "callback", text: "Medium", payload: "/think medium" },
+        { type: "callback", text: "High", payload: "/think high" },
+      ]
+    ],
+  },
+  "/fast": {
+    title: "Режим Fast Mode:",
+    buttons: [
+      [
+        { type: "callback", text: "Вкл (on)", payload: "/fast on" },
+        { type: "callback", text: "Выкл (off)", payload: "/fast off" },
+      ],
+      [
+        { type: "callback", text: "Авто (auto)", payload: "/fast auto" },
+        { type: "callback", text: "По умолчанию", payload: "/fast default" },
+      ],
+      [
+        { type: "callback", text: "Статус", payload: "/fast status" },
+      ]
+    ],
+  },
+  "/verbose": {
+    title: "Подробный режим вывода (verbose):",
+    buttons: [
+      [
+        { type: "callback", text: "Off", payload: "/verbose off" },
+        { type: "callback", text: "On", payload: "/verbose on" },
+        { type: "callback", text: "Full", payload: "/verbose full" },
+      ]
+    ],
+  },
+  "/usage": {
+    title: "Отображение расхода токенов (usage footer):",
+    buttons: [
+      [
+        { type: "callback", text: "Off", payload: "/usage off" },
+        { type: "callback", text: "Tokens", payload: "/usage tokens" },
+      ],
+      [
+        { type: "callback", text: "Full", payload: "/usage full" },
+        { type: "callback", text: "Cost", payload: "/usage cost" },
+      ]
+    ],
+  },
+  "/tts": {
+    title: "Управление озвучкой (TTS):",
+    buttons: [
+      [
+        { type: "callback", text: "Вкл (on)", payload: "/tts on" },
+        { type: "callback", text: "Выкл (off)", payload: "/tts off" },
+      ],
+      [
+        { type: "callback", text: "Статус", payload: "/tts status" },
+      ]
+    ],
+  },
+  "/elevated": {
+    title: "Режим повышенных привилегий (elevated):",
+    buttons: [
+      [
+        { type: "callback", text: "Off", payload: "/elevated off" },
+        { type: "callback", text: "On", payload: "/elevated on" },
+      ],
+      [
+        { type: "callback", text: "Ask", payload: "/elevated ask" },
+        { type: "callback", text: "Full", payload: "/elevated full" },
+      ]
+    ],
+  },
+  "/tools": {
+    title: "Режим отображения списка инструментов:",
+    buttons: [
+      [
+        { type: "callback", text: "Компактный (compact)", payload: "/tools compact" },
+        { type: "callback", text: "Подробный (verbose)", payload: "/tools verbose" },
+      ]
+    ],
+  },
+};
+
 export async function handleUpdate(
   update: MaxUpdate,
   account: ResolvedMaxAccount,
@@ -579,6 +682,20 @@ export async function handleUpdate(
   log?.info?.(
     `[openclaw-max] Message from ${senderName} (${senderId})${linkNote}: ${text.slice(0, 120)}`,
   );
+
+  // Interactive command menus (like in Telegram for /reasoning, /think, /fast, /verbose, /usage, /tts, etc.)
+  const cleanCmd = text.trim().toLowerCase();
+  const menuConfig = INTERACTIVE_COMMAND_MENUS[cleanCmd];
+  if (menuConfig && allAttachments.length === 0) {
+    log?.info?.(`[openclaw-max] Showing interactive menu for ${cleanCmd} to chat ${chatId}`);
+    try {
+      const recipient = chatType === "direct" ? { user_id: Number(senderId) } : { chat_id: Number(dialogChatId) };
+      await sendMessageWithKeyboard(account.token, recipient, menuConfig.title, menuConfig.buttons);
+      return;
+    } catch (err) {
+      log?.error?.(`[openclaw-max] Failed to send interactive menu: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
 
   const images: InboundImage[] = [];
   const files: InboundFile[] = [];

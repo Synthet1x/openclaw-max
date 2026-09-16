@@ -368,6 +368,34 @@ export function createMaxPlugin(): any {
     commands: {
       nativeCommandsAutoEnabled: true,
       nativeSkillsAutoEnabled: true,
+      buildCommandsListChannelData: (params: { currentPage: number; totalPages: number; agentId?: string }) => {
+        if (params.totalPages <= 1) return null;
+        const buttons: any[] = [];
+        if (params.currentPage > 1) {
+          buttons.push({
+            type: "callback",
+            text: "◀ Пред",
+            payload: `/commands ${params.currentPage - 1}`,
+          });
+        }
+        buttons.push({
+          type: "callback",
+          text: `${params.currentPage}/${params.totalPages}`,
+          payload: `/commands ${params.currentPage}`,
+        });
+        if (params.currentPage < params.totalPages) {
+          buttons.push({
+            type: "callback",
+            text: "След ▶",
+            payload: `/commands ${params.currentPage + 1}`,
+          });
+        }
+        return {
+          max: {
+            buttons: [buttons],
+          },
+        };
+      },
       buildModelsProviderChannelData: ({ providers }: { providers: Array<{ id: string; count: number }> }) => {
         if (!providers || providers.length === 0) return null;
         const rows: any[][] = [];
