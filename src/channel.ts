@@ -19,6 +19,7 @@ import { z } from "zod";
 import { listAccountIds, resolveAccount } from "./accounts.js";
 import {
   sendMessageWithKeyboard,
+  setMyCommands,
   sendDm,
   sendToChat,
   sendMessageWithAttachment,
@@ -364,6 +365,143 @@ export function createMaxPlugin(): any {
       order: 80,
     },
 
+    commands: {
+      nativeCommandsAutoEnabled: true,
+      nativeSkillsAutoEnabled: true,
+      buildModelsProviderChannelData: ({ providers }: { providers: Array<{ id: string; count: number }> }) => {
+        if (!providers || providers.length === 0) return null;
+        const rows: any[][] = [];
+        let row: any[] = [];
+        for (const p of providers) {
+          row.push({
+            type: "callback",
+            text: `${p.id} (${p.count})`,
+            payload: `/models ${p.id}`,
+          });
+          if (row.length === 2) {
+            rows.push(row);
+            row = [];
+          }
+        }
+        if (row.length > 0) rows.push(row);
+        return {
+          max: {
+            buttons: rows,
+          },
+        };
+      },
+      buildModelsMenuChannelData: ({ providers }: { providers: Array<{ id: string; count: number }> }) => {
+        if (!providers || providers.length === 0) return null;
+        const rows: any[][] = [];
+        let row: any[] = [];
+        for (const p of providers) {
+          row.push({
+            type: "callback",
+            text: `${p.id} (${p.count})`,
+            payload: `/models ${p.id}`,
+          });
+          if (row.length === 2) {
+            rows.push(row);
+            row = [];
+          }
+        }
+        if (row.length > 0) rows.push(row);
+        return {
+          max: {
+            buttons: rows,
+          },
+        };
+      },
+      buildModelsListChannelData: (params: {
+        provider: string;
+        models: string[];
+        currentModel?: string;
+        currentPage: number;
+        totalPages: number;
+        pageSize: number;
+        modelNames?: Map<string, string>;
+      }) => {
+        const { provider, models, currentModel, currentPage, totalPages, modelNames, pageSize = 8 } = params;
+        const rows: any[][] = [];
+        if (!models || models.length === 0) {
+          return {
+            max: {
+              buttons: [
+                [{ type: "callback", text: "« Назад к провайдерам", payload: "/models" }]
+              ]
+            }
+          };
+        }
+
+        const startIndex = (currentPage - 1) * pageSize;
+        const endIndex = Math.min(startIndex + pageSize, models.length);
+        const pageModels = models.slice(startIndex, endIndex);
+
+        for (const model of pageModels) {
+          const fullModel = model.includes("/") ? model : `${provider}/${model}`;
+          const isCurrent = currentModel && (currentModel === fullModel || currentModel.endsWith(`/${model}`));
+          const label = modelNames?.get(fullModel) || model;
+          const displayText = isCurrent ? `${label} ✓` : label;
+
+          rows.push([
+            {
+              type: "callback",
+              text: displayText,
+              payload: `/model ${fullModel}`,
+            }
+          ]);
+        }
+
+        // Pagination row
+        if (totalPages > 1) {
+          const paginationRow: any[] = [];
+          if (currentPage > 1) {
+            paginationRow.push({
+              type: "callback",
+              text: "◀ Пред",
+              payload: `/models ${provider} ${currentPage - 1}`,
+            });
+          }
+          paginationRow.push({
+            type: "callback",
+            text: `${currentPage}/${totalPages}`,
+            payload: `/models ${provider} ${currentPage}`,
+          });
+          if (currentPage < totalPages) {
+            paginationRow.push({
+              type: "callback",
+              text: "След ▶",
+              payload: `/models ${provider} ${currentPage + 1}`,
+            });
+          }
+          rows.push(paginationRow);
+        }
+
+        // Back button
+        rows.push([
+          {
+            type: "callback",
+            text: "« Назад к провайдерам",
+            payload: "/models",
+          }
+        ]);
+
+        return {
+          max: {
+            buttons: rows,
+          },
+        };
+      },
+      buildModelBrowseChannelData: () => {
+        return {
+          max: {
+            buttons: [
+              [{ type: "callback", text: "Выбрать модель", payload: "/models" }]
+            ]
+          }
+        };
+      },
+    },
     capabilities: {
       chatTypes: ["direct" as const, "group" as const],
       media: true,
@@ -536,6 +674,16 @@ export function createMaxPlugin(): any {
         try {
           const info = await getBotInfo(account.token);
           log?.info?.(`[openclaw-max] Connected as bot: ${info.name} (@${info.username})`);
+
+          // Register bot commands menu in MAX Bot API so users see popup menu when typing /
+          const defaultCommands = [
+            { name: "models", description: "Показать доступные модели" },
+            { name: "model", description: "Переключить модель (/model provider/model)" },
+            { name: "new", description: "Начать новую сессию" },
+            { name: "status", description: "Статус агента и контекста" },
+            { name: "help", description: "Справка по командам" },
+          ];
+          await setMyCommands(account.token, defaultCommands).catch(() => {});
         } catch (err) {
           log?.error?.(
             `[openclaw-max] Token verification failed: ${err instanceof Error ? err.message : err}`,

@@ -80,9 +80,27 @@ export function interactiveToMaxButtons(rawInteractive: unknown): MaxButton[][] 
 }
 
 export function resolvePayloadKeyboardButtons(
-  payload: { channelData?: unknown; interactive?: unknown; presentation?: unknown } | null | undefined,
+  payload: { channelData?: any; interactive?: unknown; presentation?: unknown } | null | undefined,
 ): MaxButton[][] | null {
   if (!payload || typeof payload !== "object") return null;
+
+  // 1. Check channelData (from /models command handlers!)
+  // In OpenClaw, command handlers return:
+  // channelData: { max: { buttons: [...] } } or channelData: { maxInlineKeyboard: [...] }
+  if (payload.channelData && typeof payload.channelData === "object") {
+    const cd = payload.channelData;
+    const maxData = cd.max || cd.maxInlineKeyboard;
+    if (maxData) {
+      if (Array.isArray(maxData.buttons)) {
+        return maxData.buttons;
+      }
+      if (Array.isArray(maxData)) {
+        return maxData;
+      }
+    }
+  }
+
+  // 2. Check interactive / presentation blocks
   return interactiveToMaxButtons(payload.interactive) ?? presentationToMaxButtons(payload.presentation);
 }
 

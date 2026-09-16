@@ -45,7 +45,7 @@ export function configureMaxTransport(opts?: { httpProxy?: string }): void {
 
 async function maxRequest<T>(
   token: string,
-  method: "GET" | "POST" | "DELETE" | "PUT",
+  method: "GET" | "POST" | "DELETE" | "PUT" | "PATCH",
   path: string,
   params?: Record<string, string | number>,
   body?: unknown,
@@ -391,5 +391,28 @@ export async function sendMessageWithKeyboard(
     return data?.message?.body?.mid ?? null;
   } catch {
     return null;
+  }
+}
+
+/**
+ * Register bot commands menu in MAX Bot API.
+ * PATCH /me/commands
+ */
+export async function setMyCommands(
+  token: string,
+  commands: Array<{ name: string; description: string }>,
+): Promise<boolean> {
+  try {
+    await maxRequest(
+      token,
+      "PATCH",
+      "/me/commands",
+      {},
+      { commands },
+    );
+    return true;
+  } catch (err) {
+    console.warn(`[openclaw-max] setMyCommands error: ${err instanceof Error ? err.message : err}`);
+    return false;
   }
 }
