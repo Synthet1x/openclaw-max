@@ -1,3 +1,4 @@
+import { resolvePayloadKeyboardButtons, toInlineKeyboardAttachment } from "./keyboards.js";
 /**
  * MAX channel plugin for OpenClaw.
  *
@@ -17,6 +18,7 @@ import { registerPluginHttpRoute } from "openclaw/plugin-sdk/webhook-ingress";
 import { z } from "zod";
 import { listAccountIds, resolveAccount } from "./accounts.js";
 import {
+  sendMessageWithKeyboard,
   sendDm,
   sendToChat,
   sendMessageWithAttachment,
@@ -223,7 +225,7 @@ function createStreamingDeliver(
     await throttledEdit(accumulated + " …");
   }
 
-  async function deliver(payload: { text?: string; body?: string }) {
+  async function deliver(payload: any) {
     stopTyping();
     if (pendingEdit) {
       clearTimeout(pendingEdit);
@@ -232,10 +234,19 @@ function createStreamingDeliver(
     const finalText = payload?.text ?? payload?.body ?? accumulated;
     if (!finalText) return;
 
+    const keyboardButtons = resolvePayloadKeyboardButtons(payload);
+
     if (messageId) {
-      await editMessage(account.token, messageId, finalText);
+      // If we have inline buttons, edit with buttons
+      await editMessage(account.token, messageId, finalText, keyboardButtons ? [toInlineKeyboardAttachment(keyboardButtons)] : undefined);
     } else {
-      await sendReply(account, chatId, chatType, finalText);
+      if (keyboardButtons && keyboardButtons.length > 0) {
+        const numericId = parseInt(chatId, 10);
+        const target = chatType === "direct" ? { user_id: numericId } : { chat_id: numericId };
+        await sendMessageWithKeyboard(account.token, target, finalText, keyboardButtons);
+      } else {
+        await sendReply(account, chatId, chatType, finalText);
+      }
     }
   }
 
@@ -357,6 +368,8 @@ export function createMaxPlugin(): any {
       chatTypes: ["direct" as const, "group" as const],
       media: true,
       threads: false,
+      interactiveReplies: true,
+      inlineKeyboards: true,
       reactions: false,
       edit: false,
       unsend: false,

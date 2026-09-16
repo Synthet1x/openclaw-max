@@ -199,3 +199,11 @@ export interface MaxUpdatesResponse {
   updates: MaxUpdate[];
   marker?: number | null;
 }
+
+export interface MaxCallback {
+  callback_id: string;
+  payload?: string;
+  user: MaxUser;
+  message?: MaxMessage;
+  timestamp?: number;
+}

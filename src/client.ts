@@ -124,9 +124,18 @@ export async function sendToChat(token: string, chatId: number, text: string): P
  * Edit an existing message (for streaming updates).
  * PUT /messages?message_id={id}
  */
-export async function editMessage(token: string, messageId: string, text: string): Promise<boolean> {
+export async function editMessage(
+  token: string,
+  messageId: string,
+  text: string,
+  attachments?: any[],
+): Promise<boolean> {
   try {
-    await maxRequest(token, "PUT", "/messages", { message_id: messageId }, { text, format: "markdown" });
+    const body: Record<string, unknown> = { text, format: "markdown" };
+    if (attachments && attachments.length > 0) {
+      body.attachments = attachments;
+    }
+    await maxRequest(token, "PUT", "/messages", { message_id: messageId }, body);
     return true;
   } catch (err) {
     console.warn(`[openclaw-max] editMessage error: ${err instanceof Error ? err.message : err}`);
@@ -322,4 +331,65 @@ export async function sendDmWithImage(token: string, userId: number, text: strin
  */
 export async function sendToChatWithImage(token: string, chatId: number, text: string, imageToken: string): Promise<string | null> {
   return sendMessageWithAttachment(token, { chat_id: chatId }, text, "image", imageToken);
+}
+
+/**
+ * Send an answer to a callback query from an inline keyboard button.
+ */
+export async function answerOnCallback(
+  token: string,
+  callbackId: string,
+  notification?: string,
+): Promise<boolean> {
+  try {
+    await maxRequest(
+      token,
+      "POST",
+      "/answers",
+      { callback_id: callbackId },
+      notification ? { notification } : {},
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Send a message with an inline keyboard attached.
+ */
+export async function sendMessageWithKeyboard(
+  token: string,
+  to: { user_id?: number; chat_id?: number },
+  text: string,
+  keyboardButtons: any[][],
+): Promise<string | null> {
+  const body: Record<string, unknown> = {
+    text,
+    attachments: [
+      {
+        type: "inline_keyboard",
+        payload: {
+          buttons: keyboardButtons,
+        },
+      },
+    ],
+  };
+
+  const query: Record<string, string | number> = {};
+  if (to.chat_id) query.chat_id = to.chat_id;
+  if (to.user_id) query.user_id = to.user_id;
+
+  try {
+    const data = await maxRequest<{ message?: { body?: { mid?: string } } }>(
+      token,
+      "POST",
+      "/messages",
+      query,
+      body,
+    );
+    return data?.message?.body?.mid ?? null;
+  } catch {
+    return null;
+  }
 }

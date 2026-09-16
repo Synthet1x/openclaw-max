@@ -463,6 +463,49 @@ export async function handleUpdate(
   deliver: WebhookHandlerDeps["deliver"],
   log?: WebhookHandlerDeps["log"],
 ) {
+  // Handle interactive inline keyboard button clicks (callback query)
+  if (update.update_type === "message_callback" || (update as any).callback) {
+    const cb = (update as any).callback || (update as any);
+    const callbackId = cb.callback_id || cb.id;
+    const payload = cb.payload || "";
+    const sender = cb.user;
+    if (!sender) return;
+
+    log?.info?.(`[openclaw-max] Button clicked by ${sender.name || sender.user_id}: ${payload}`);
+
+    // Acknowledge the callback immediately so the button stops loading spinner
+    if (callbackId) {
+      import("./client.js").then(({ answerOnCallback }) => {
+        answerOnCallback(account.token, callbackId).catch(() => {});
+      });
+    }
+
+    if (!payload) return;
+
+    // Dispatch the payload as a command / user message from that user
+    const senderId = String(sender.user_id);
+    const senderName = sender.name || sender.username || senderId;
+    const dialogChatId = String(cb.message?.recipient?.chat_id ?? sender.user_id);
+    const chatType = cb.message?.recipient?.chat_type === "chat" ? "group" : "direct";
+    const chatId = chatType === "direct" ? senderId : dialogChatId;
+
+    try {
+      await deliver({
+        text: payload,
+        senderId,
+        senderName,
+        chatId,
+        dialogChatId,
+        chatType,
+        messageId: `cb-${callbackId || Date.now()}`,
+        accountId: account.accountId,
+      });
+    } catch (err) {
+      log?.error?.(`[openclaw-max] Error delivering callback payload: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    return;
+  }
+
   const msg = extractMessage(update);
   if (!msg) return;
 
