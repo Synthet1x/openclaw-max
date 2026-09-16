@@ -499,18 +499,29 @@ function resolveModelThinkingLevels(provider?: string | null, model?: string | n
 /**
  * Resolves the currently active model and thinking level for a chat session from OpenClaw sqlite store.
  */
-function getSessionModelInfo(agentId: string, peerId: string): { provider: string; model: string; thinkingLevel?: string } {
+function getSessionModelInfo(accountId: string, peerId: string, dialogChatId?: string): { provider: string; model: string; thinkingLevel?: string } {
   const home = homedir();
   let defaultProvider = "google-antigravity";
   let defaultModel = "gemini-3.8-flash-tiered";
   let defaultThinking = "high";
+  let resolvedAgentId = accountId;
 
-  // 1. Read default config
+  // 1. Read default config and resolve agentId from bindings
   try {
     const cfgPath = join(home, ".openclaw", "openclaw.json");
     if (existsSync(cfgPath)) {
       const cfg = JSON.parse(readFileSync(cfgPath, "utf-8"));
-      const agentEntry = cfg?.agents?.entries?.[agentId];
+      if (Array.isArray(cfg?.bindings)) {
+        for (const b of cfg.bindings) {
+          if (b?.match?.channel === "max" && (b?.match?.accountId === accountId || b?.match?.accountId === "*")) {
+            if (b.agentId) {
+              resolvedAgentId = b.agentId;
+              break;
+            }
+          }
+        }
+      }
+      const agentEntry = cfg?.agents?.entries?.[resolvedAgentId];
       const primary = agentEntry?.model?.primary || cfg?.agents?.defaults?.model?.primary;
       if (primary && primary.includes("/")) {
         const parts = primary.split("/");
@@ -521,21 +532,33 @@ function getSessionModelInfo(agentId: string, peerId: string): { provider: strin
     }
   } catch {}
 
-  // 2. Read session entry from sqlite
+  // 2. Read session entry from sqlite for the resolved agent
   try {
-    const dbPath = join(home, ".openclaw", "agents", agentId, "agent", "openclaw-agent.sqlite");
-    if (existsSync(dbPath)) {
+    const candidateAgents = [resolvedAgentId];
+    if (resolvedAgentId !== "iri") candidateAgents.push("iri");
+    if (resolvedAgentId !== "orli") candidateAgents.push("orli");
+
+    for (const ag of candidateAgents) {
+      const dbPath = join(home, ".openclaw", "agents", ag, "agent", "openclaw-agent.sqlite");
+      if (!existsSync(dbPath)) continue;
+
       const db = new DatabaseSync(dbPath, { readOnly: true });
+      // Strictly match MAX channel sessions (never cross into Telegram session_nodes!)
       const stmt = db.prepare(
-        "SELECT entry_json FROM session_nodes WHERE session_key LIKE ? OR session_key LIKE ? ORDER BY updated_at DESC LIMIT 1"
+        "SELECT entry_json FROM session_nodes WHERE session_key LIKE '%:max:%' AND (session_key LIKE ? OR session_key LIKE ? OR session_key LIKE ?) ORDER BY updated_at DESC LIMIT 1"
       );
-      const row = stmt.get(`%max%${peerId}%`, `%${peerId}%`) as { entry_json?: string } | undefined;
+      const row = stmt.get(`%:${peerId}%`, `%:${dialogChatId || peerId}%`, `%${peerId}%`) as { entry_json?: string } | undefined;
       db.close();
 
       if (row?.entry_json) {
         const data = JSON.parse(row.entry_json);
-        const model = data.modelOverride || data.model || defaultModel;
-        const provider = data.providerOverride || data.modelProvider || defaultProvider;
+        let model = data.modelOverride || data.model || defaultModel;
+        let provider = data.providerOverride || data.modelProvider || defaultProvider;
+        if (typeof model === "string" && model.includes("/")) {
+          const parts = model.split("/");
+          provider = parts[0];
+          model = parts.slice(1).join("/");
+        }
         const thinkingLevel = data.thinkingLevel || defaultThinking;
         return { provider, model, thinkingLevel };
       }
@@ -764,7 +787,7 @@ export async function handleUpdate(
   // Dynamic /think menu based on current session model
   if (cleanCmd === "/think" && allAttachments.length === 0) {
     try {
-      const info = getSessionModelInfo((account as any).agentId || "orli", senderId);
+      const info = getSessionModelInfo(account.accountId, senderId, dialogChatId);
       const levels = resolveModelThinkingLevels(info.provider, info.model);
       const cur = info.thinkingLevel || "default";
 
