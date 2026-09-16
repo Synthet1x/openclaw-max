@@ -738,8 +738,10 @@ export async function handleUpdate(
   const senderId = String(sender.user_id);
   const senderName = sender.name || sender.username || senderId;
 
-  // DM Policy
+  // DM Policy & First User Auto-Claim Ownership
   if (chatType === "direct") {
+    tryAutoClaimOwner(senderId, account, log);
+
     const allowed = checkDmPolicy(senderId, account);
     if (!allowed) {
       log?.warn?.(`[openclaw-max] DM from ${senderName} (${senderId}) rejected by policy`);
@@ -841,6 +843,67 @@ export async function handleUpdate(
       `[openclaw-max] Deliver error: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
+}
+
+
+/**
+ * Auto-claims ownership for the first user who messages the bot in DM if no MAX owner exists yet.
+ * 1. If account.allowFrom is empty, adds the user to allowFrom.
+ * 2. If commands.ownerAllowFrom has no MAX entry, adds max:<userId> to commands.ownerAllowFrom in openclaw.json.
+ */
+function tryAutoClaimOwner(userId: string, account: ResolvedMaxAccount, log?: WebhookHandlerDeps["log"]): boolean {
+  const home = homedir();
+  const cfgPath = join(home, ".openclaw", "openclaw.json");
+
+  try {
+    if (!existsSync(cfgPath)) return false;
+    const cfg = JSON.parse(readFileSync(cfgPath, "utf-8"));
+
+    // Check if commands.ownerAllowFrom already has any MAX user
+    const ownerList: string[] = Array.isArray(cfg?.commands?.ownerAllowFrom) ? cfg.commands.ownerAllowFrom : [];
+    const hasMaxOwner = ownerList.some((entry) => typeof entry === "string" && (entry.startsWith("max:") || entry === userId));
+
+    // Check if account allowFrom is empty or unrestricted
+    const isAllowFromEmpty = !account.allowFrom || account.allowFrom.length === 0;
+
+    if (hasMaxOwner && !isAllowFromEmpty) {
+      return false;
+    }
+
+    let modified = false;
+
+    // 1. If no MAX owner in commands.ownerAllowFrom, add this user
+    if (!hasMaxOwner) {
+      if (!cfg.commands) cfg.commands = {};
+      if (!Array.isArray(cfg.commands.ownerAllowFrom)) cfg.commands.ownerAllowFrom = [];
+      const userTag = `max:${userId}`;
+      if (!cfg.commands.ownerAllowFrom.includes(userTag)) {
+        cfg.commands.ownerAllowFrom.push(userTag);
+        modified = true;
+        log?.info?.(`[openclaw-max] 👑 First user auto-claimed owner rights: ${userTag} added to commands.ownerAllowFrom`);
+      }
+    }
+
+    // 2. If account allowFrom is empty in config, auto-add this user
+    const accConfig = cfg?.channels?.max?.accounts?.[account.accountId];
+    if (accConfig) {
+      if (!Array.isArray(accConfig.allowFrom) || accConfig.allowFrom.length === 0) {
+        accConfig.allowFrom = [userId];
+        account.allowFrom.push(userId);
+        modified = true;
+        log?.info?.(`[openclaw-max] First user ${userId} auto-added to account ${account.accountId} allowFrom`);
+      }
+    }
+
+    if (modified) {
+      writeFileSync(cfgPath, JSON.stringify(cfg, null, 2), "utf-8");
+      return true;
+    }
+  } catch (err) {
+    log?.error?.(`[openclaw-max] Error in tryAutoClaimOwner: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  return false;
 }
 
 function checkDmPolicy(userId: string, account: ResolvedMaxAccount): boolean {
