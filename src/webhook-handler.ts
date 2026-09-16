@@ -476,13 +476,21 @@ const INTERACTIVE_COMMAND_MENUS: Record<string, { title: string; buttons: Array<
     title: "Глубина размышлений модели (thinking level):",
     buttons: [
       [
-        { type: "callback", text: "Off", payload: "/think off" },
-        { type: "callback", text: "Low", payload: "/think low" },
+        { type: "callback", text: "Default", payload: "/think default" },
+        { type: "callback", text: "Adaptive", payload: "/think adaptive" },
       ],
       [
+        { type: "callback", text: "Off", payload: "/think off" },
+        { type: "callback", text: "Minimal", payload: "/think minimal" },
+      ],
+      [
+        { type: "callback", text: "Low", payload: "/think low" },
         { type: "callback", text: "Medium", payload: "/think medium" },
+      ],
+      [
         { type: "callback", text: "High", payload: "/think high" },
-      ]
+        { type: "callback", text: "Max", payload: "/think max" },
+      ],
     ],
   },
   "/fast": {
