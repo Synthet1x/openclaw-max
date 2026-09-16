@@ -54,6 +54,14 @@
     "extensions": [
       "./dist/index.js"
     ],
+    "compat": {
+      "pluginApi": ">=2026.3.24",
+      "minGatewayVersion": "2026.3.24"
+    },
+    "build": {
+      "openclawVersion": "2026.9.4",
+      "pluginSdkVersion": "2026.9.4"
+    },
     "channel": {
       "id": "max",
       "label": "MAX",
