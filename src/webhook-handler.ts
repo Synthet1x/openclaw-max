@@ -1,10 +1,11 @@
+import { DatabaseSync } from "node:sqlite";
 import { homedir } from "node:os";
 /**
  * Inbound webhook and long-polling update handler for MAX Bot API events.
  * Handles messages, forwards, replies, and downloads all media types (files, audio, voice, images).
  */
 
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type {
@@ -459,6 +460,91 @@ export function createWebhookHandler(deps: WebhookHandlerDeps) {
 
 
 // Interactive menu definitions for commands without arguments (analogous to Telegram native menus)
+
+/**
+ * Returns supported thinking levels based on provider and model name.
+ * Exactly mirrors OpenClaw thinking profiles:
+ * - Gemini / Google: default, off, minimal, low, medium, high, adaptive
+ * - Grok (xAI 4.6): default, off, low, medium, high, xhigh
+ * - Grok 4.3 / 4.5: default, off, minimal, low, medium, high
+ * - Claude / Anthropic: default, off, low, medium, high
+ * - DeepSeek / Qwen / others: default, off, low, medium, high, max
+ */
+function resolveModelThinkingLevels(provider?: string | null, model?: string | null): string[] {
+  const p = (provider || "").toLowerCase();
+  const m = (model || "").toLowerCase();
+
+  // Gemini / Google Antigravity
+  if (p.includes("google") || p.includes("gemini") || m.includes("gemini")) {
+    return ["default", "off", "minimal", "low", "medium", "high", "adaptive"];
+  }
+
+  // xAI Grok
+  if (p.includes("xai") || m.includes("grok")) {
+    if (m.includes("4.6") || m.includes("latest")) {
+      return ["default", "off", "low", "medium", "high", "xhigh"];
+    }
+    return ["default", "off", "minimal", "low", "medium", "high"];
+  }
+
+  // Claude / Anthropic
+  if (p.includes("anthropic") || m.includes("claude")) {
+    return ["default", "off", "low", "medium", "high"];
+  }
+
+  // Default fallback for reasoning models
+  return ["default", "off", "low", "medium", "high", "max"];
+}
+
+/**
+ * Resolves the currently active model and thinking level for a chat session from OpenClaw sqlite store.
+ */
+function getSessionModelInfo(agentId: string, peerId: string): { provider: string; model: string; thinkingLevel?: string } {
+  const home = homedir();
+  let defaultProvider = "google-antigravity";
+  let defaultModel = "gemini-3.8-flash-tiered";
+  let defaultThinking = "high";
+
+  // 1. Read default config
+  try {
+    const cfgPath = join(home, ".openclaw", "openclaw.json");
+    if (existsSync(cfgPath)) {
+      const cfg = JSON.parse(readFileSync(cfgPath, "utf-8"));
+      const agentEntry = cfg?.agents?.entries?.[agentId];
+      const primary = agentEntry?.model?.primary || cfg?.agents?.defaults?.model?.primary;
+      if (primary && primary.includes("/")) {
+        const parts = primary.split("/");
+        defaultProvider = parts[0];
+        defaultModel = parts.slice(1).join("/");
+      }
+      defaultThinking = agentEntry?.thinkingDefault || cfg?.agents?.defaults?.thinkingDefault || "high";
+    }
+  } catch {}
+
+  // 2. Read session entry from sqlite
+  try {
+    const dbPath = join(home, ".openclaw", "agents", agentId, "agent", "openclaw-agent.sqlite");
+    if (existsSync(dbPath)) {
+      const db = new DatabaseSync(dbPath, { readOnly: true });
+      const stmt = db.prepare(
+        "SELECT entry_json FROM session_nodes WHERE session_key LIKE ? OR session_key LIKE ? ORDER BY updated_at DESC LIMIT 1"
+      );
+      const row = stmt.get(`%max%${peerId}%`, `%${peerId}%`) as { entry_json?: string } | undefined;
+      db.close();
+
+      if (row?.entry_json) {
+        const data = JSON.parse(row.entry_json);
+        const model = data.modelOverride || data.model || defaultModel;
+        const provider = data.providerOverride || data.modelProvider || defaultProvider;
+        const thinkingLevel = data.thinkingLevel || defaultThinking;
+        return { provider, model, thinkingLevel };
+      }
+    }
+  } catch {}
+
+  return { provider: defaultProvider, model: defaultModel, thinkingLevel: defaultThinking };
+}
+
 const INTERACTIVE_COMMAND_MENUS: Record<string, { title: string; buttons: Array<Array<{ type: "callback"; text: string; payload: string }>> }> = {
   "/reasoning": {
     title: "Настройка показа хода мыслей (reasoning):",
@@ -470,27 +556,6 @@ const INTERACTIVE_COMMAND_MENUS: Record<string, { title: string; buttons: Array<
       [
         { type: "callback", text: "Потоково (stream)", payload: "/reasoning stream" },
       ]
-    ],
-  },
-  "/think": {
-    title: "Глубина размышлений модели (thinking level):",
-    buttons: [
-      [
-        { type: "callback", text: "Default", payload: "/think default" },
-        { type: "callback", text: "Adaptive", payload: "/think adaptive" },
-      ],
-      [
-        { type: "callback", text: "Off", payload: "/think off" },
-        { type: "callback", text: "Minimal", payload: "/think minimal" },
-      ],
-      [
-        { type: "callback", text: "Low", payload: "/think low" },
-        { type: "callback", text: "Medium", payload: "/think medium" },
-      ],
-      [
-        { type: "callback", text: "High", payload: "/think high" },
-        { type: "callback", text: "Max", payload: "/think max" },
-      ],
     ],
   },
   "/fast": {
@@ -693,6 +758,41 @@ export async function handleUpdate(
 
   // Interactive command menus (like in Telegram for /reasoning, /think, /fast, /verbose, /usage, /tts, etc.)
   const cleanCmd = text.trim().toLowerCase();
+
+  // Dynamic /think menu based on current session model
+  if (cleanCmd === "/think" && allAttachments.length === 0) {
+    try {
+      const info = getSessionModelInfo((account as any).agentId || "orli", senderId);
+      const levels = resolveModelThinkingLevels(info.provider, info.model);
+      const cur = info.thinkingLevel || "default";
+
+      const rows: Array<Array<{ type: "callback"; text: string; payload: string }>> = [];
+      let row: Array<{ type: "callback"; text: string; payload: string }> = [];
+
+      for (const lvl of levels) {
+        const isCurrent = cur.toLowerCase() === lvl.toLowerCase();
+        const label = lvl.charAt(0).toUpperCase() + lvl.slice(1);
+        row.push({
+          type: "callback",
+          text: isCurrent ? `${label} ✓` : label,
+          payload: `/think ${lvl}`,
+        });
+        if (row.length === 2) {
+          rows.push(row);
+          row = [];
+        }
+      }
+      if (row.length > 0) rows.push(row);
+
+      const title = `Current thinking level: ${cur}.\nМодель: ${info.model} (${info.provider})\nВыберите уровень размышлений:`;
+      const recipient = chatType === "direct" ? { user_id: Number(senderId) } : { chat_id: Number(dialogChatId) };
+      await sendMessageWithKeyboard(account.token, recipient, title, rows);
+      return;
+    } catch (err) {
+      log?.error?.(`[openclaw-max] Failed to send dynamic think menu: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   const menuConfig = INTERACTIVE_COMMAND_MENUS[cleanCmd];
   if (menuConfig && allAttachments.length === 0) {
     log?.info?.(`[openclaw-max] Showing interactive menu for ${cleanCmd} to chat ${chatId}`);
