@@ -28,11 +28,20 @@ This project is a community-driven fork of the original [@olegbalbekov/openclaw-
 - Full media sending and receiving (images, audio, video, documents)
 - Allowlist-based access control
 - Modern OpenClaw Channel Plugin architecture
+- Interactive menus & inline keyboards: `/models`, `/model`, `/think`, `/fast`, `/reasoning`, `/tts`, `/verbose`, `/usage`
+
+> 💡 **For AI Agents & Automation:** See [AI_GUIDE.md](./AI_GUIDE.md) for detailed gotchas, edge cases, and automated troubleshooting instructions.
 
 ## Installation
 
 ### 1. Install the plugin
 
+**From ClawHub (Official OpenClaw Registry):**
+```bash
+openclaw plugins install clawhub:@synthet1x/openclaw-max
+```
+
+**From NPM:**
 ```bash
 openclaw plugins install @synthet1x/openclaw-max
 ```
