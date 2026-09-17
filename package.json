@@ -1,7 +1,7 @@
 {
   "name": "@synthet1x/openclaw-max",
-  "version": "1.0.12",
-  "description": "MAX messenger (max.ru) channel plugin for OpenClaw with full attachment, audio/voice, unwrapLink, and long-polling support",
+  "version": "1.0.13",
+  "description": "MAX messenger (max.ru) channel plugin for OpenClaw with full document/media support, unwrapLink, long-polling, and webhook-based voice messaging",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -70,7 +70,7 @@
       "selectionLabel": "MAX (Bot API)",
       "docsPath": "/channels/max",
       "docsLabel": "max",
-      "blurb": "Connect OpenClaw to MAX messenger via Bot API. Supports DMs, group chats, documents, and voice/audio.",
+      "blurb": "Connect OpenClaw to MAX messenger via Bot API. Supports DMs, group chats, documents, and webhook voice messaging.",
       "order": 80
     },
     "install": {

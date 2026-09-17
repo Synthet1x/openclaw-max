@@ -2,7 +2,7 @@
 
 MAX messenger (max.ru) channel plugin for [OpenClaw](https://github.com/openclaw/openclaw).
 
-Production-ready connector with full inbound/outbound attachment support (documents, audio/voice messages, video, images), quote/forward unwrapping (`msg.link`), automatic webhook deduplication, and out-of-the-box Long Polling for home setups.
+Production-ready connector with full inbound/outbound document and media support (documents, images, video, and webhook-based voice notes), quote/forward unwrapping (`msg.link`), automatic webhook deduplication, and zero-config Long Polling for home setups.
 
 ---
 
@@ -23,9 +23,10 @@ This project is a community-driven fork of the original [@olegbalbekov/openclaw-
 ## Features
 
 - DM and group chat support
-- Long polling (default, works without public IP/domain) and webhook modes
+- Long polling (default, works without public IP/domain) and Webhook modes
 - Streaming replies with typing indicator
-- Full media sending and receiving (images, audio, video, documents)
+- Full media sending and receiving (documents, images, video, audio)
+- Voice notes reception & STT transcription (in Webhook mode)
 - Allowlist-based access control
 - Modern OpenClaw Channel Plugin architecture
 - Interactive menus & inline keyboards: `/models`, `/model`, `/think`, `/fast`, `/reasoning`, `/tts`, `/verbose`, `/usage`
@@ -80,6 +81,7 @@ Add to `~/.openclaw/openclaw.json`:
       token: "YOUR_BOT_TOKEN_HERE",
       dmPolicy: "allowlist",         // "open" | "allowlist" | "closed"
       allowFrom: ["YOUR_USER_ID"],   // MAX user IDs — must be strings
+      // webhookUrl: "https://your-domain.com/max/webhook", // Required for voice notes (MAX platform limitation)
     }
   },
   bindings: [
@@ -117,7 +119,7 @@ Should show: `MAX default: enabled, dm:allowlist, allow:YOUR_USER_ID`
 | `allowFrom` | string[] | `[]` | MAX user IDs allowed to DM (when dmPolicy=allowlist) |
 | `groupPolicy` | string | `"allowlist"` | Group chat access policy: `open`, `allowlist`, `closed` |
 | `groupAllowFrom` | string[] | `[]` | MAX user IDs allowed in group chats (when groupPolicy=allowlist) |
-| `webhookUrl` | string | — | Webhook URL (optional, uses long polling if not set) |
+| `webhookUrl` | string | — | Webhook URL (optional; required for voice notes; uses long polling if omitted) |
 | `webhookSecret` | string | — | Webhook secret for request verification |
 | `httpProxy` | string | — | Optional HTTP(S) proxy for MAX API traffic, e.g. `http://user:pass@host:port` |
 

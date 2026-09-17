@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.0.13] - 2026-09-17
+
+### Changed
+- Refined and clarified descriptions across `package.json`, `openclaw.plugin.json`, `README.md`, and ClawHub metadata to explicitly state that voice notes require Webhook mode due to upstream MAX platform limitations.
+
+---
+
+## [1.0.12] - 2026-09-16
+
+### Added
+- Added official MAX 512x512 high-resolution icon (`assets/icon.png`) for ClawHub package catalog and OpenClaw Control UI branding.
+- Added comprehensive `AI_GUIDE.md` for AI operators and automated deployment.
+
+---
+
+## [1.0.11] - 2026-09-16
+
+### Fixed
+- Fixed SQLite session query isolation (`%:max:%` prefix matching) so Telegram sessions no longer overwrite active MAX model settings in `/think` menus.
+- Added explicit `accountId` to `agentId` mapping via `openclaw.json` bindings.
+- Improved compound model identifier parsing (`provider/model`).
+
+---
+
 ## [1.0.10] - 2026-09-16
 
 ### Added
