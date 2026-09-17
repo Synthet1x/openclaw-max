@@ -11,8 +11,8 @@ Production-ready connector with full inbound/outbound attachment support (docume
 This project is a community-driven fork of the original [@olegbalbekov/openclaw-max](https://github.com/olegbalbekov/openclaw-max) by [Oleg Balbekov](https://github.com/olegbalbekov).
 
 ### What's improved in this fork:
-1. **Full attachment support:** Handles arbitrary documents (PDF, DOCX, XLSX, ZIP), audio files, and voice notes — not just images.
-2. **Audio & Voice notes:** Automatic download, MIME detection, and forwarding to OpenClaw STT/Whisper for voice interactions.
+1. **Full document & media attachments:** Handles arbitrary files (PDF, DOCX, XLSX, ZIP, video, images) across both Webhook and Long Polling modes.
+2. **Audio & Voice notes (Webhook only):** Automatic download, MIME detection, and forwarding to OpenClaw STT/Whisper. *(Note: Voice messages require Webhook mode; in Long Polling mode, the MAX platform strips audio content from `message_created` events due to an upstream platform limitation).*
 3. **Forward & reply unwrap (`unwrapLink`):** Extracts quotes, original senders, and nested attachments from forwarded messages.
 4. **Automatic webhook deduplication:** In-memory TTL cache preventing double processing from network retries.
 5. **Cross-platform:** Tested and verified on both Linux and Windows environments.
