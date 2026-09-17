@@ -41,11 +41,26 @@ export function resolveAccount(
     enabled: merged.enabled !== false,
     webhookUrl: merged.webhookUrl,
     webhookSecret: merged.webhookSecret,
-    webhookPath: merged.webhookPath ?? DEFAULT_WEBHOOK_PATH,
+    webhookPath: resolveWebhookPath(merged, id),
     dmPolicy: merged.dmPolicy ?? "pairing",
     allowFrom: normalizeAllowFrom(merged.allowFrom),
     httpProxy: merged.httpProxy?.trim() || undefined,
   };
+}
+
+function resolveWebhookPath(merged: Record<string, any>, accountId: string): string {
+  if (merged.webhookPath && typeof merged.webhookPath === "string") {
+    return merged.webhookPath.startsWith("/") ? merged.webhookPath : `/${merged.webhookPath}`;
+  }
+  if (merged.webhookUrl && typeof merged.webhookUrl === "string") {
+    try {
+      const url = new URL(merged.webhookUrl);
+      if (url.pathname && url.pathname !== "/") {
+        return url.pathname;
+      }
+    } catch {}
+  }
+  return accountId === DEFAULT_ACCOUNT_ID ? DEFAULT_WEBHOOK_PATH : `/max/webhook/${accountId}`;
 }
 
 function normalizeAllowFrom(raw?: string[]): string[] {
