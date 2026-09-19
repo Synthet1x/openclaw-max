@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.0.14] - 2026-09-19
+
+### Security & Access Control
+- **SSRF & Token Leak Prevention**:
+  - `downloadFile` in `client.ts` now strictly restricts `Authorization: <token>` headers to official `*.max.ru` domains.
+  - Added loopback (`127.0.0.1`, `localhost`) and private RFC1918 IPv4/IPv6 address filtering to prevent SSRF attacks against internal network resources.
+- **Timing-Safe Webhook Secret Verification**:
+  - `validateSecret` in `webhook-handler.ts` now uses `crypto.timingSafeEqual` to prevent timing side-channel attacks on `x-max-bot-api-secret`.
+- **Primary Owner & Restricted Multi-User Architecture**:
+  - First authorized user added to `allowFrom` (via initial setup or pairing code) is automatically granted primary Owner rights (`commands.ownerAllowFrom`).
+  - Subsequent users who join `allowFrom` later (family, colleagues, guest invites) receive standard restricted permissions:
+    - Administrative commands and menus (`/elevated`, `/think`, `/fast`, `/reasoning`) are strictly gated and restricted to the primary Owner.
+    - Subsequent users cannot alter models or privilege levels until explicitly promoted by the primary Owner.
+- **Dependency Security**:
+  - Patched high-severity vulnerability in `undici` via `npm audit fix`.
+
+---
+
 ## [1.0.13] - 2026-09-17
 
 ### Changed

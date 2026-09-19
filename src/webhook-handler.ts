@@ -1,5 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { homedir } from "node:os";
+import { timingSafeEqual } from "node:crypto";
 /**
  * Inbound webhook and long-polling update handler for MAX Bot API events.
  * Handles messages, forwards, replies, and downloads all media types (files, audio, voice, images).
@@ -126,8 +127,17 @@ async function readBody(req: IncomingMessage): Promise<string | null> {
 
 function validateSecret(req: IncomingMessage, secret?: string): boolean {
   if (!secret) return true;
-  const header = req.headers["x-max-bot-api-secret"];
-  return header === secret;
+  const raw = req.headers["x-max-bot-api-secret"];
+  const header = Array.isArray(raw) ? raw[0] : raw;
+  if (!header) return false;
+  try {
+    const bufA = Buffer.from(header, "utf-8");
+    const bufB = Buffer.from(secret, "utf-8");
+    if (bufA.length !== bufB.length) return false;
+    return timingSafeEqual(bufA, bufB);
+  } catch {
+    return false;
+  }
 }
 
 /** Detect image MIME type from magic bytes */
@@ -761,9 +771,9 @@ export async function handleUpdate(
   const senderId = String(sender.user_id);
   const senderName = sender.name || sender.username || senderId;
 
-  // DM Policy & First User Auto-Claim Ownership
+  // DM Policy & First User Owner Establishment
   if (chatType === "direct") {
-    tryAutoClaimOwner(senderId, account, log);
+    handleUserRolesAndPromotion(senderId, account, log);
 
     const allowed = checkDmPolicy(senderId, account);
     if (!allowed) {
@@ -783,6 +793,31 @@ export async function handleUpdate(
 
   // Interactive command menus (like in Telegram for /reasoning, /think, /fast, /verbose, /usage, /tts, etc.)
   const cleanCmd = text.trim().toLowerCase();
+  const isOwner = isMaxOwner(senderId);
+
+  // Restrict administrative actions for subsequent / non-owner users
+  const isAdminCmd =
+    cleanCmd === "/elevated" ||
+    cleanCmd.startsWith("/elevated ") ||
+    cleanCmd === "/think" ||
+    cleanCmd.startsWith("/think ") ||
+    cleanCmd === "/fast" ||
+    cleanCmd.startsWith("/fast ") ||
+    cleanCmd === "/reasoning" ||
+    cleanCmd.startsWith("/reasoning ");
+
+  if (isAdminCmd && !isOwner) {
+    log?.warn?.(`[openclaw-max] Restricted non-owner user ${senderId} attempted admin command: ${cleanCmd}`);
+    import("./client.js").then(({ sendDm, sendToChat }) => {
+      const warning = "⚠️ Команда доступна только владельцу бота (Owner). Для изменения прав обратитесь к администратору.";
+      if (chatType === "direct") {
+        sendDm(account.token, Number(senderId), warning);
+      } else {
+        sendToChat(account.token, Number(dialogChatId), warning);
+      }
+    });
+    return;
+  }
 
   // Dynamic /think menu based on current session model
   if (cleanCmd === "/think" && allAttachments.length === 0) {
@@ -870,11 +905,37 @@ export async function handleUpdate(
 
 
 /**
- * Auto-claims ownership for the first user who messages the bot in DM if no MAX owner exists yet.
- * 1. If account.allowFrom is empty, adds the user to allowFrom.
- * 2. If commands.ownerAllowFrom has no MAX entry, adds max:<userId> to commands.ownerAllowFrom in openclaw.json.
+ * Checks if a user is an Owner (admin) in openclaw.json commands.ownerAllowFrom.
  */
-function tryAutoClaimOwner(userId: string, account: ResolvedMaxAccount, log?: WebhookHandlerDeps["log"]): boolean {
+function isMaxOwner(userId: string): boolean {
+  try {
+    const cfgPath = join(homedir(), ".openclaw", "openclaw.json");
+    if (!existsSync(cfgPath)) return false;
+    const cfg = JSON.parse(readFileSync(cfgPath, "utf-8"));
+    const owners: string[] = Array.isArray(cfg?.commands?.ownerAllowFrom) ? cfg.commands.ownerAllowFrom : [];
+    return owners.some((entry) => typeof entry === "string" && (entry === `max:${userId}` || entry === userId));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * First User Owner & Restricted Subsequent Users Architecture:
+ * 1. Primary Owner:
+ *    - Authorized via pairing code or initial manual config in account.allowFrom.
+ *    - If commands.ownerAllowFrom has NO MAX user yet, this first authorized user
+ *      is granted full Owner rights (max:<userId> added to commands.ownerAllowFrom).
+ * 2. Subsequent Users:
+ *    - Added to allowFrom later (via pairing or invited by AI on owner request).
+ *    - Since hasMaxOwner is already true, subsequent users remain Restricted / Standard Users.
+ *    - They can chat and use skills, but administrative actions (/elevated, /think, /fast)
+ *      are blocked until the primary Owner explicitly promotes their privileges.
+ */
+function handleUserRolesAndPromotion(userId: string, account: ResolvedMaxAccount, log?: WebhookHandlerDeps["log"]): boolean {
+  // Only authorized users in allowFrom are eligible
+  const isAllowed = account.allowFrom.includes(userId) || account.allowFrom.includes(`max:${userId}`);
+  if (!isAllowed) return false;
+
   const home = homedir();
   const cfgPath = join(home, ".openclaw", "openclaw.json");
 
@@ -882,48 +943,24 @@ function tryAutoClaimOwner(userId: string, account: ResolvedMaxAccount, log?: We
     if (!existsSync(cfgPath)) return false;
     const cfg = JSON.parse(readFileSync(cfgPath, "utf-8"));
 
-    // Check if commands.ownerAllowFrom already has any MAX user
     const ownerList: string[] = Array.isArray(cfg?.commands?.ownerAllowFrom) ? cfg.commands.ownerAllowFrom : [];
     const hasMaxOwner = ownerList.some((entry) => typeof entry === "string" && (entry.startsWith("max:") || entry === userId));
 
-    // Check if account allowFrom is empty or unrestricted
-    const isAllowFromEmpty = !account.allowFrom || account.allowFrom.length === 0;
-
-    if (hasMaxOwner && !isAllowFromEmpty) {
+    // Owner already established: subsequent users remain restricted standard users
+    if (hasMaxOwner) {
       return false;
     }
 
-    let modified = false;
-
-    // 1. If no MAX owner in commands.ownerAllowFrom, add this user
-    if (!hasMaxOwner) {
-      if (!cfg.commands) cfg.commands = {};
-      if (!Array.isArray(cfg.commands.ownerAllowFrom)) cfg.commands.ownerAllowFrom = [];
-      const userTag = `max:${userId}`;
-      if (!cfg.commands.ownerAllowFrom.includes(userTag)) {
-        cfg.commands.ownerAllowFrom.push(userTag);
-        modified = true;
-        log?.info?.(`[openclaw-max] 👑 First user auto-claimed owner rights: ${userTag} added to commands.ownerAllowFrom`);
-      }
-    }
-
-    // 2. If account allowFrom is empty in config, auto-add this user
-    const accConfig = cfg?.channels?.max?.accounts?.[account.accountId];
-    if (accConfig) {
-      if (!Array.isArray(accConfig.allowFrom) || accConfig.allowFrom.length === 0) {
-        accConfig.allowFrom = [userId];
-        account.allowFrom.push(userId);
-        modified = true;
-        log?.info?.(`[openclaw-max] First user ${userId} auto-added to account ${account.accountId} allowFrom`);
-      }
-    }
-
-    if (modified) {
-      writeFileSync(cfgPath, JSON.stringify(cfg, null, 2), "utf-8");
-      return true;
-    }
+    // Promote the first authorized user from allowFrom to primary Owner
+    if (!cfg.commands) cfg.commands = {};
+    if (!Array.isArray(cfg.commands.ownerAllowFrom)) cfg.commands.ownerAllowFrom = [];
+    const userTag = `max:${userId}`;
+    cfg.commands.ownerAllowFrom.push(userTag);
+    writeFileSync(cfgPath, JSON.stringify(cfg, null, 2), "utf-8");
+    log?.info?.(`[openclaw-max] 👑 Primary Owner established: ${userTag} granted full admin rights`);
+    return true;
   } catch (err) {
-    log?.error?.(`[openclaw-max] Error in tryAutoClaimOwner: ${err instanceof Error ? err.message : String(err)}`);
+    log?.error?.(`[openclaw-max] Error in handleUserRolesAndPromotion: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   return false;

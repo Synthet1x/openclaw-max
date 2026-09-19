@@ -236,11 +236,41 @@ export async function getBotInfo(token: string): Promise<{ name: string; usernam
 
 /**
  * Скачать файл по URL.
+ * Защищено от утечки токена (Authorization отправляется только на *.max.ru)
+ * и от SSRF-атак на локальную сеть.
  */
 export async function downloadFile(token: string, url: string): Promise<Buffer | null> {
   try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+
+    // Prevent SSRF: block loopback and private LAN addresses
+    if (
+      host === "localhost" ||
+      host === "127.0.0.1" ||
+      host === "::1" ||
+      host.startsWith("192.168.") ||
+      host.startsWith("10.") ||
+      host.endsWith(".local") ||
+      host.endsWith(".internal")
+    ) {
+      return null;
+    }
+    if (host.startsWith("172.")) {
+      const parts = host.split(".");
+      const second = parseInt(parts[1], 10);
+      if (!isNaN(second) && second >= 16 && second <= 31) return null;
+    }
+
+    // Send Bot Token ONLY to official MAX domains to prevent exfiltration
+    const isMax = host === "max.ru" || host.endsWith(".max.ru");
+    const headers: Record<string, string> = {};
+    if (isMax) {
+      headers["Authorization"] = token;
+    }
+
     const res = await fetch(url, {
-      headers: { Authorization: token },
+      headers,
       dispatcher,
     });
     if (!res.ok) return null;

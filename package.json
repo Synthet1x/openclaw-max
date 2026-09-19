@@ -1,6 +1,6 @@
 {
   "name": "@synthet1x/openclaw-max",
-  "version": "1.0.13",
+  "version": "1.0.14",
   "description": "MAX messenger (max.ru) channel plugin for OpenClaw with full document/media support, unwrapLink, long-polling, and webhook-based voice messaging",
   "type": "module",
   "main": "./dist/index.js",
