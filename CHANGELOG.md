@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.0.15] - 2026-10-19
+
+### Added
+- **Live progress draft (like Telegram's `progress` streaming mode)**: while the agent runs, the channel now keeps one editable status message showing what it is doing.
+  - Shows `⏳ Работаю…` plus the most recent tool-activity lines (last 6 shown, last 20 kept).
+  - Subscribes to tool results via `onToolResult` with `forceToolResultProgress: true`, so activity appears without requiring `/verbose`.
+  - Tool lines stay inside the draft instead of arriving as separate chat messages.
+  - The draft yields to the answer as soon as answer text starts streaming, so it never fights the reply preview.
+  - Throttled edits (min 800 ms apart) to respect MAX API rate limits.
+
+### Changed
+- New per-account config flag `progress` (default `true`) to enable or disable the live progress draft: set `channels.max.accounts.<id>.progress: false` to turn it off.
+- `resolveAccount` now surfaces the `progress` flag on the resolved account.
+
+---
+
 ## [1.0.14] - 2026-09-19
 
 ### Security & Access Control

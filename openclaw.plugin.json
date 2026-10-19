@@ -6,7 +6,7 @@
   ],
   "name": "MAX",
   "description": "MAX messenger (max.ru) channel plugin for OpenClaw with document/media attachments, long-polling and webhook voice messaging",
-  "version": "1.0.14",
+  "version": "1.0.15",
   "configSchema": {
     "type": "object",
     "additionalProperties": true,
@@ -118,6 +118,10 @@
           },
           "defaultAccount": {
             "type": "string"
+          },
+          "progress": {
+            "type": "boolean",
+            "description": "Show a live 'working' draft with tool activity while the agent runs (like Telegram progress mode)."
           }
         },
         "additionalProperties": true
@@ -154,6 +158,10 @@
         "httpProxy": {
           "label": "HTTP Proxy",
           "help": "Optional HTTP(S) proxy for MAX API traffic, e.g. http://user:pass@host:port."
+        },
+        "progress": {
+          "label": "Live Progress Draft",
+          "help": "Show an editable 'working' status message with tool activity, similar to Telegram."
         }
       }
     }

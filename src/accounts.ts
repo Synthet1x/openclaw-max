@@ -45,6 +45,7 @@ export function resolveAccount(
     dmPolicy: merged.dmPolicy ?? "pairing",
     allowFrom: normalizeAllowFrom(merged.allowFrom),
     httpProxy: merged.httpProxy?.trim() || undefined,
+    progress: merged.progress !== false,
   };
 }
 

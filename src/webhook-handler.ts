@@ -522,14 +522,20 @@ function getSessionModelInfo(accountId: string, peerId: string, dialogChatId?: s
     if (existsSync(cfgPath)) {
       const cfg = JSON.parse(readFileSync(cfgPath, "utf-8"));
       if (Array.isArray(cfg?.bindings)) {
+        let exactMatch: string | undefined;
+        let wildcardMatch: string | undefined;
         for (const b of cfg.bindings) {
-          if (b?.match?.channel === "max" && (b?.match?.accountId === accountId || b?.match?.accountId === "*")) {
-            if (b.agentId) {
-              resolvedAgentId = b.agentId;
+          if (b?.match?.channel === "max") {
+            if (b?.match?.accountId === accountId && b.agentId) {
+              exactMatch = b.agentId;
               break;
+            } else if (b?.match?.accountId === "*" && b.agentId && !wildcardMatch) {
+              wildcardMatch = b.agentId;
             }
           }
         }
+        if (exactMatch) resolvedAgentId = exactMatch;
+        else if (wildcardMatch) resolvedAgentId = wildcardMatch;
       }
       const agentEntry = cfg?.agents?.entries?.[resolvedAgentId];
       const primary = agentEntry?.model?.primary || cfg?.agents?.defaults?.model?.primary;

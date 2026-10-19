@@ -81,6 +81,11 @@ const MaxAccountSchema = z
       .string()
       .optional()
       .describe("HTTP(S) proxy URL for MAX API traffic"),
+    progress: z
+      .boolean()
+      .optional()
+      .default(true)
+      .describe("Show a live 'working' draft with tool activity (like Telegram)"),
   })
   .passthrough();
 
@@ -151,12 +156,17 @@ function createStreamingDeliver(
   log?: any,
 ): {
   onPartialToken: (text: string) => Promise<void>;
+  onToolProgress: (text: string) => Promise<void>;
   deliver: (payload: { text?: string; body?: string }) => Promise<void>;
 } {
   let messageId: string | null = null;
   let accumulated = "";
   let lastEditAt = 0;
   let pendingEdit: ReturnType<typeof setTimeout> | null = null;
+  /** Once real answer text starts streaming, the draft belongs to the answer. */
+  let answerStarted = false;
+  /** Rolling tool-activity lines shown in the "working" draft. */
+  let progressLines: string[] = [];
 
   const numericDialogChatId = parseInt(dialogChatId, 10);
   let typingInterval: ReturnType<typeof setInterval> | null = null;
@@ -207,8 +217,43 @@ function createStreamingDeliver(
 
   let creationPromise: Promise<void> | null = null;
 
+  /** Render the current "working" draft body from collected tool lines. */
+  function renderProgress(): string {
+    const lines = progressLines.slice(-6);
+    return ["⏳ Работаю…", "", ...lines].join("\n");
+  }
+
+  /**
+   * Called on each tool result. Keeps one editable status message alive so the
+   * user can see the agent is actually working (tool name + detail), mirroring
+   * Telegram's "progress" streaming mode.
+   */
+  async function onToolProgress(text: string) {
+    const line = (text || "").trim().split("\n")[0]?.trim();
+    if (!line) return;
+    if (progressLines[progressLines.length - 1] !== line) progressLines.push(line);
+    if (progressLines.length > 20) progressLines = progressLines.slice(-20);
+    // The answer preview owns the message once it starts streaming.
+    if (answerStarted) return;
+
+    if (!messageId) {
+      if (!creationPromise) {
+        creationPromise = (async () => {
+          messageId = await sendReply(account, chatId, chatType, renderProgress());
+          lastEditAt = Date.now();
+          log?.info?.(`[openclaw-max] Progress draft started mid=${messageId}`);
+        })();
+      }
+      await creationPromise;
+      return;
+    }
+
+    await throttledEdit(renderProgress());
+  }
+
   async function onPartialToken(text: string) {
     if (!text) return;
+    answerStarted = true;
     accumulated = text;
 
     if (!messageId) {
@@ -251,7 +296,7 @@ function createStreamingDeliver(
     }
   }
 
-  return { onPartialToken, deliver };
+  return { onPartialToken, onToolProgress, deliver };
 }
 
 /**
@@ -279,9 +324,8 @@ async function deliverMessage(
   let agentId = accountId;
   const configObj = cfg as any;
   if (Array.isArray(configObj?.bindings)) {
-    const match = configObj.bindings.find(
-      (b: any) => b.match?.channel === "max" && (b.match?.accountId === accountId || b.match?.accountId === "*")
-    );
+    const match = configObj.bindings.find((b: any) => b.match?.channel === "max" && b.match?.accountId === accountId)
+      ?? configObj.bindings.find((b: any) => b.match?.channel === "max" && b.match?.accountId === "*");
     if (match?.agentId) agentId = match.agentId;
   }
   if (!agentId || agentId === "default") agentId = (accountId === "orli") ? "orli" : "iri";
@@ -319,13 +363,17 @@ async function deliverMessage(
     MediaTypes: files && files.length > 1 ? files.map((f) => f.mimeType) : undefined,
   });
 
-  const { onPartialToken, deliver } = createStreamingDeliver(
+  const { onPartialToken, onToolProgress, deliver } = createStreamingDeliver(
     account,
     chatId,
     dialogChatId,
     chatType,
     log,
   );
+
+  // Live "working" draft with tool activity, like Telegram's progress mode.
+  // Disable per account with `progress: false`.
+  const progressEnabled = (account as any).progress !== false;
 
   await rt.channel.reply.dispatchReplyWithBufferedBlockDispatcher({
     ctx: msgCtx,
@@ -340,6 +388,16 @@ async function deliverMessage(
       onPartialReply: async (payload: { text?: string }) => {
         if (payload?.text) await onPartialToken(payload.text);
       },
+      ...(progressEnabled
+        ? {
+            // Force tool-progress callbacks even without /verbose, and keep the
+            // tool results inside the draft instead of separate chat messages.
+            forceToolResultProgress: true,
+            onToolResult: async (payload: { text?: string }) => {
+              if (payload?.text) await onToolProgress(payload.text);
+            },
+          }
+        : {}),
       images: images?.map((img) => ({
         type: "image" as const,
         mimeType: img.mimeType,

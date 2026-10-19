@@ -28,6 +28,8 @@ export interface MaxAccountConfig {
   groupPolicy?: "open" | "allowlist" | "disabled";
   /** Group allowlisted user IDs */
   groupAllowFrom?: string[];
+  /** Show a live 'working' draft with tool activity (like Telegram progress mode). Default true. */
+  progress?: boolean;
   /**
    * Optional HTTP(S) proxy for all MAX API traffic, e.g. http://user:***@host:port.
    * Useful when the gateway has no direct route to platform-api2.max.ru.
@@ -52,6 +54,8 @@ export interface ResolvedMaxAccount {
   groupPolicy?: "open" | "allowlist" | "disabled";
   groupAllowFrom?: string[];
   httpProxy?: string;
+  /** Show a live 'working' draft with tool activity (like Telegram progress mode). */
+  progress?: boolean;
 }
 
 // ─── API objects ──────────────────────────────────────────────────────────────
