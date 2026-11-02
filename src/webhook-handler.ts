@@ -20,7 +20,6 @@ import type {
   WebhookDeliverMsg,
 } from "./types.js";
 import { downloadFile, sendMessageWithKeyboard } from "./client.js";
-import { createLaneDispatcher, makeLaneKey, updateLaneChatId } from "./lane-dispatcher.js";
 
 const MAX_BODY_BYTES = 10 * 1024 * 1024; // 10 MB
 
@@ -436,16 +435,6 @@ async function processAttachments({
 export function createWebhookHandler(deps: WebhookHandlerDeps) {
   const { account, deliver, log } = deps;
 
-  // A webhook POST must ACK and return; turns for one chat still reach the core
-  // promptly so it can steer an active run instead of queueing behind it.
-  const dispatcher = createLaneDispatcher({
-    maxConcurrent: 4,
-    onError: (err, laneKey) =>
-      log?.error?.(
-        `[openclaw-max] Lane ${laneKey} failed: ${err instanceof Error ? err.message : String(err)}`,
-      ),
-  });
-
   return async (req: IncomingMessage, res: ServerResponse) => {
     if (req.method !== "POST") {
       respondJson(res, 405, { error: "Method not allowed" });
@@ -475,10 +464,7 @@ export function createWebhookHandler(deps: WebhookHandlerDeps) {
     // ACK immediately — MAX requires HTTP 200 within 30 seconds
     respondOk(res);
 
-    const laneKey = makeLaneKey(account.accountId, updateLaneChatId(update));
-    dispatcher.dispatch(laneKey, async () => {
-      await handleUpdate(update, account, deliver, log);
-    });
+    await handleUpdate(update, account, deliver, log);
   };
 }
 

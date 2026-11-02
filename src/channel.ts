@@ -35,7 +35,6 @@ import {
 } from "./client.js";
 import { getMaxRuntime } from "./runtime.js";
 import { createWebhookHandler, handleUpdate } from "./webhook-handler.js";
-import { createLaneDispatcher, makeLaneKey, updateLaneChatId } from "./lane-dispatcher.js";
 import type { ResolvedMaxAccount, WebhookDeliverMsg } from "./types.js";
 
 const CHANNEL_ID = "max";
@@ -1084,16 +1083,6 @@ async function startLongPollingMode(
 ) {
   log?.info?.(`[openclaw-max] Starting in long polling mode for account ${account.accountId}`);
 
-  // Intake must never await a full agent turn: awaiting here blocked the whole
-  // polling loop and made a second message wait for the first answer to finish.
-  const laneDispatcher = createLaneDispatcher({
-    maxConcurrent: 4,
-    onError: (err, laneKey) =>
-      log?.error?.(
-        `[openclaw-max] Lane ${laneKey} failed: ${err instanceof Error ? err.message : String(err)}`,
-      ),
-  });
-
   const signal: AbortSignal = ctx.abortSignal;
   let marker: number | null | undefined = undefined;
   let consecutiveErrors = 0;
@@ -1120,8 +1109,7 @@ async function startLongPollingMode(
 
         for (const update of result.updates) {
           if (signal?.aborted) break;
-          const laneKey = makeLaneKey(account.accountId, updateLaneChatId(update));
-          laneDispatcher.dispatch(laneKey, async () => {
+          try {
             await handleUpdate(
               update,
               account,
@@ -1131,7 +1119,11 @@ async function startLongPollingMode(
               },
               log,
             );
-          });
+          } catch (itemErr) {
+            log?.error?.(
+              `[openclaw-max] Error processing update for ${account.accountId}: ${itemErr instanceof Error ? itemErr.message : String(itemErr)}`,
+            );
+          }
         }
       }
     } catch (err) {
@@ -1147,9 +1139,6 @@ async function startLongPollingMode(
       await new Promise((r) => setTimeout(r, delay));
     }
   }
-
-  laneDispatcher.stop();
-  await laneDispatcher.drain();
 
   log?.info?.(`[openclaw-max] Long polling loop ended for account ${account.accountId}`);
 }
