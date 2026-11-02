@@ -35,6 +35,7 @@ import {
 } from "./client.js";
 import { getMaxRuntime } from "./runtime.js";
 import { createWebhookHandler, handleUpdate } from "./webhook-handler.js";
+import { renderTaskList } from "./tasklist.js";
 import type { ResolvedMaxAccount, WebhookDeliverMsg } from "./types.js";
 
 const CHANNEL_ID = "max";
@@ -136,10 +137,11 @@ async function sendReply(
   const numericId = parseInt(chatId, 10);
   if (isNaN(numericId)) return null;
 
+  const body = renderTaskList(text);
   if (chatType === "direct") {
-    return sendDm(account.token, numericId, text);
+    return sendDm(account.token, numericId, body);
   } else {
-    return sendToChat(account.token, numericId, text);
+    return sendToChat(account.token, numericId, body);
   }
 }
 
@@ -205,7 +207,7 @@ function createStreamingDeliver(
     const elapsed = Date.now() - lastEditAt;
     if (pendingEdit) clearTimeout(pendingEdit);
     if (elapsed >= STREAM_EDIT_INTERVAL_MS) {
-      await editMessage(account.token, messageId, text);
+      await editMessage(account.token, messageId, renderTaskList(text));
       lastEditAt = Date.now();
       if (typingInterval !== null) {
         sendTypingAction(account.token, numericDialogChatId).catch(() => {});
@@ -213,7 +215,7 @@ function createStreamingDeliver(
     } else {
       pendingEdit = setTimeout(async () => {
         if (messageId) {
-          await editMessage(account.token, messageId, text).catch(() => {});
+          await editMessage(account.token, messageId, renderTaskList(text)).catch(() => {});
           lastEditAt = Date.now();
           if (typingInterval !== null) {
             sendTypingAction(account.token, numericDialogChatId).catch(() => {});
@@ -342,7 +344,7 @@ function createStreamingDeliver(
     accumulated = "";
     answerStarted = false;
     if (messageId) {
-      await editMessage(account.token, messageId, renderProgress()).catch(() => {});
+      await editMessage(account.token, messageId, renderTaskList(renderProgress())).catch(() => {});
       lastEditAt = Date.now();
     }
   }
@@ -351,7 +353,7 @@ function createStreamingDeliver(
   async function finalizeCurrentDraft(): Promise<void> {
     // When the message already holds a delivered answer, leave it as-is.
     if (messageId && accumulated && !answerDelivered) {
-      await editMessage(account.token, messageId, accumulated).catch(() => {});
+      await editMessage(account.token, messageId, renderTaskList(accumulated)).catch(() => {});
     }
     messageId = null;
     accumulated = "";
@@ -409,12 +411,12 @@ function createStreamingDeliver(
 
     if (messageId) {
       // If we have inline buttons, edit with buttons
-      await editMessage(account.token, messageId, finalText, keyboardButtons ? [toInlineKeyboardAttachment(keyboardButtons)] : undefined);
+      await editMessage(account.token, messageId, renderTaskList(finalText), keyboardButtons ? [toInlineKeyboardAttachment(keyboardButtons)] : undefined);
     } else {
       if (keyboardButtons && keyboardButtons.length > 0) {
         const numericId = parseInt(chatId, 10);
         const target = chatType === "direct" ? { user_id: numericId } : { chat_id: numericId };
-        await sendMessageWithKeyboard(account.token, target, finalText, keyboardButtons);
+        await sendMessageWithKeyboard(account.token, target, renderTaskList(finalText), keyboardButtons);
       } else {
         await sendReply(account, chatId, chatType, finalText);
       }
