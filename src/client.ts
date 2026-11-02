@@ -95,7 +95,7 @@ async function maxRequest<T>(
 export async function sendDm(token: string, userId: number, text: string): Promise<string | null> {
   try {
     const res = await maxRequest<{ message?: { body?: { mid?: string } } }>(
-      token, "POST", "/messages", { user_id: userId }, { text, format: "markdown" }
+      token, "POST", "/messages", { user_id: userId }, { text, format: "markdown", disable_link_preview: true }
     );
     return res?.message?.body?.mid ?? null;
   } catch (err) {
@@ -111,7 +111,7 @@ export async function sendDm(token: string, userId: number, text: string): Promi
 export async function sendToChat(token: string, chatId: number, text: string): Promise<string | null> {
   try {
     const res = await maxRequest<{ message?: { body?: { mid?: string } } }>(
-      token, "POST", "/messages", { chat_id: chatId }, { text, format: "markdown" }
+      token, "POST", "/messages", { chat_id: chatId }, { text, format: "markdown", disable_link_preview: true }
     );
     return res?.message?.body?.mid ?? null;
   } catch (err) {
@@ -130,16 +130,27 @@ export async function editMessage(
   text: string,
   attachments?: any[],
 ): Promise<boolean> {
-  try {
+  const buildBody = (withPreviewFlag: boolean): Record<string, unknown> => {
     const body: Record<string, unknown> = { text, format: "markdown" };
+    if (withPreviewFlag) body.disable_link_preview = true;
     if (attachments && attachments.length > 0) {
       body.attachments = attachments;
     }
-    await maxRequest(token, "PUT", "/messages", { message_id: messageId }, body);
+    return body;
+  };
+  try {
+    await maxRequest(token, "PUT", "/messages", { message_id: messageId }, buildBody(true));
     return true;
   } catch (err) {
-    console.warn(`[openclaw-max] editMessage error: ${err instanceof Error ? err.message : err}`);
-    return false;
+    // If the server rejects the preview flag on edit, retry without it so the
+    // edit itself still lands (graceful degradation, not a hard failure).
+    try {
+      await maxRequest(token, "PUT", "/messages", { message_id: messageId }, buildBody(false));
+      return true;
+    } catch (err2) {
+      console.warn(`[openclaw-max] editMessage error: ${err2 instanceof Error ? err2.message : err2}`);
+      return false;
+    }
   }
 }
 

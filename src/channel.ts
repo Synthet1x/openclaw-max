@@ -154,17 +154,25 @@ function createStreamingDeliver(
   dialogChatId: string,
   chatType: string,
   log?: any,
+  progressEnabled = true,
 ): {
-  onPartialToken: (text: string) => Promise<void>;
+  onPartialToken: (text: string, isReplace?: boolean) => Promise<void>;
   onToolProgress: (text: string) => Promise<void>;
+  startDraft: () => Promise<void>;
   deliver: (payload: { text?: string; body?: string }) => Promise<void>;
 } {
   let messageId: string | null = null;
+  /** Guards the start draft so repeated onReplyStart keepalives create it once. */
+  let startDraftDone = false;
   let accumulated = "";
   let lastEditAt = 0;
   let pendingEdit: ReturnType<typeof setTimeout> | null = null;
   /** Once real answer text starts streaming, the draft belongs to the answer. */
   let answerStarted = false;
+  /** True once a tool result arrived in the current assistant segment. */
+  let segmentHadTool = false;
+  /** Set once a final answer is delivered; the next work segment opens a new draft. */
+  let answerDelivered = false;
   /** Rolling tool-activity lines shown in the "working" draft. */
   let progressLines: string[] = [];
 
@@ -217,10 +225,56 @@ function createStreamingDeliver(
 
   let creationPromise: Promise<void> | null = null;
 
+  /**
+   * Turn one raw tool-activity line into a short, plain-text line.
+   * MAX auto-generates link previews for anything that looks like a path or URL,
+   * which produced a huge card in the progress draft. Collapse whitespace, drop
+   * filesystem paths down to their basename, and cap the length.
+   */
+  function sanitizeProgressLine(raw: string): string {
+    let line = (raw || "").replace(/\s+/g, " ").trim();
+    if (!line) return "";
+    // Strip protocol URLs down to their host first (before path collapsing).
+    line = line.replace(/https?:\/\/([^\s/]+)\S*/g, "$1");
+    // Replace long filesystem paths (~/..., /home/..., ./...) with the last segment.
+    line = line.replace(/(?:~|\/|\.\/)[\w.@-]*\/([\w.@-]+)/g, "$1");
+    // Remove characters MAX may treat as link anchors.
+    line = line.replace(/[<>]/g, "");
+    if (line.length > 120) line = line.slice(0, 117) + "…";
+    return line;
+  }
+
   /** Render the current "working" draft body from collected tool lines. */
   function renderProgress(): string {
     const lines = progressLines.slice(-6);
+    if (lines.length === 0) return "⏳ Работаю…";
     return ["⏳ Работаю…", "", ...lines].join("\n");
+  }
+
+  /**
+   * Open the "⏳ Работаю…" draft as soon as the turn starts, not only on the
+   * first tool result. Without this the user stares at an empty chat while the
+   * model thinks (a long silent first token), which reads as a hung bot.
+   * The first tool result or answer token then edits this same message.
+   */
+  async function startDraft() {
+    if (!progressEnabled || startDraftDone) return;
+    if (messageId || creationPromise) return;
+    startDraftDone = true;
+    const attempt = (async () => {
+      const mid = await sendReply(account, chatId, chatType, renderProgress());
+      if (mid) {
+        messageId = mid;
+        lastEditAt = Date.now();
+        log?.info?.(`[openclaw-max] Start draft created mid=${mid}`);
+      } else {
+        // Send failed: allow a later tool/answer event to retry the draft.
+        creationPromise = null;
+        startDraftDone = false;
+      }
+    })();
+    creationPromise = attempt;
+    await attempt;
   }
 
   /**
@@ -229,10 +283,20 @@ function createStreamingDeliver(
    * Telegram's "progress" streaming mode.
    */
   async function onToolProgress(text: string) {
-    const line = (text || "").trim().split("\n")[0]?.trim();
+    const line = sanitizeProgressLine((text || "").split("\n")[0] ?? "");
     if (!line) return;
+    // A new work segment after a delivered answer: open a fresh draft so the
+    // user sees "⏳ Работаю…" again instead of silence while tools run.
+    if (answerDelivered) await finalizeCurrentDraft();
     if (progressLines[progressLines.length - 1] !== line) progressLines.push(line);
     if (progressLines.length > 20) progressLines = progressLines.slice(-20);
+    // Pre-tool narration: some models (Grok) stream a sentence before their
+    // first tool call. That text is commentary, not the answer — roll it back
+    // into the "⏳ Работаю…" draft instead of leaving it in the chat as a reply.
+    if (answerStarted && !answerDelivered && !segmentHadTool) {
+      await demoteAnswerToDraft();
+    }
+    segmentHadTool = true;
     // The answer preview owns the message once it starts streaming.
     if (answerStarted) return;
 
@@ -251,8 +315,63 @@ function createStreamingDeliver(
     await throttledEdit(renderProgress());
   }
 
-  async function onPartialToken(text: string) {
+  /**
+   * True when `next` is a brand-new answer block rather than a growth of the
+   * one currently shown in the draft. With steering, a follow-up message can be
+   * injected mid-turn, so a single run may emit several final answers; without
+   * this check the second answer edits over the first inside the same message.
+   */
+  function isNewAnswerBlock(next: string, isReplace = false): boolean {
+    if (!answerStarted || !messageId || !accumulated) return false;
+    // A re-projection of the current answer is never a new block.
+    if (isReplace) return false;
+    const prev = accumulated.trim();
+    const cand = (next || "").trim();
+    if (!cand || !prev) return false;
+    // A growth of the current answer, or a shorter re-projection of it.
+    if (cand.startsWith(prev) || prev.startsWith(cand)) return false;
+    return true;
+  }
+
+  /**
+   * The streamed text turned out to be pre-tool narration. Reuse its message
+   * as the progress draft instead of leaving commentary in the chat as if it
+   * were the reply.
+   */
+  async function demoteAnswerToDraft(): Promise<void> {
+    accumulated = "";
+    answerStarted = false;
+    if (messageId) {
+      await editMessage(account.token, messageId, renderProgress()).catch(() => {});
+      lastEditAt = Date.now();
+    }
+  }
+
+  /** Close the current draft message and forget it, so the next answer opens a new one. */
+  async function finalizeCurrentDraft(): Promise<void> {
+    // When the message already holds a delivered answer, leave it as-is.
+    if (messageId && accumulated && !answerDelivered) {
+      await editMessage(account.token, messageId, accumulated).catch(() => {});
+    }
+    messageId = null;
+    accumulated = "";
+    answerStarted = false;
+    answerDelivered = false;
+    segmentHadTool = false;
+    progressLines = [];
+    // Let the next work segment open its own "⏳ Работаю…" draft.
+    startDraftDone = false;
+    creationPromise = null;
+  }
+
+  async function onPartialToken(text: string, isReplace = false) {
     if (!text) return;
+    // A steered follow-up starts a fresh answer block: give it its own message
+    // instead of overwriting the previous answer in the same draft.
+    if (answerDelivered || isNewAnswerBlock(text, isReplace)) {
+      await finalizeCurrentDraft();
+    }
+    if (!answerStarted) segmentHadTool = false;
     answerStarted = true;
     accumulated = text;
 
@@ -280,6 +399,12 @@ function createStreamingDeliver(
     const finalText = payload?.text ?? payload?.body ?? accumulated;
     if (!finalText) return;
 
+    // Steering can make one run emit several final blocks; each gets its own
+    // message instead of editing over the previous answer.
+    if (isNewAnswerBlock(finalText)) {
+      await finalizeCurrentDraft();
+    }
+
     const keyboardButtons = resolvePayloadKeyboardButtons(payload);
 
     if (messageId) {
@@ -294,9 +419,16 @@ function createStreamingDeliver(
         await sendReply(account, chatId, chatType, finalText);
       }
     }
+
+    // Remember what this message now shows, so a following block is detected as
+    // new (and opens its own message) instead of overwriting this answer.
+    accumulated = finalText;
+    answerStarted = true;
+    // Mark the segment done: the next tool activity opens a fresh "работает" draft.
+    answerDelivered = true;
   }
 
-  return { onPartialToken, onToolProgress, deliver };
+  return { onPartialToken, onToolProgress, startDraft, deliver };
 }
 
 /**
@@ -363,30 +495,60 @@ async function deliverMessage(
     MediaTypes: files && files.length > 1 ? files.map((f) => f.mimeType) : undefined,
   });
 
-  const { onPartialToken, onToolProgress, deliver } = createStreamingDeliver(
+  // Live "working" draft with tool activity, like Telegram's progress mode.
+  // Disable per account with `progress: false`.
+  const progressEnabled = (account as any).progress !== false;
+
+  const { onPartialToken, onToolProgress, startDraft, deliver } = createStreamingDeliver(
     account,
     chatId,
     dialogChatId,
     chatType,
     log,
+    progressEnabled,
   );
 
-  // Live "working" draft with tool activity, like Telegram's progress mode.
-  // Disable per account with `progress: false`.
-  const progressEnabled = (account as any).progress !== false;
+  // Minimal turn-adoption lifecycle.
+  // The core only treats an inbound turn as steerable when `turnAdoptionLifecycle`
+  // is present in replyOptions: its presence opens the `allowActiveResolution`
+  // gate in dispatch-from-config, so a second message arriving mid-run can be
+  // injected into the active turn instead of waiting behind it (steering).
+  // Without a durable ingress drain we keep the callbacks side-effect free;
+  // they exist to satisfy the adoption contract, not to own a claim.
+  const adoptionAbort = new AbortController();
+  const turnAdoptionLifecycle = {
+    admission: "exclusive" as const,
+    abortSignal: adoptionAbort.signal,
+    onAdopted: () => {
+      log?.info?.(`[openclaw-max] Turn adopted for ${senderName}`);
+    },
+    onDeferred: () => {
+      log?.info?.(`[openclaw-max] Turn deferred (queued behind active run) for ${senderName}`);
+    },
+    onDeferredHeartbeat: () => {},
+    onAbandoned: () => {
+      log?.info?.(`[openclaw-max] Turn abandoned for ${senderName}`);
+    },
+    onSettled: () => {
+      log?.info?.(`[openclaw-max] Turn settled for ${senderName}`);
+    },
+  };
 
   await rt.channel.reply.dispatchReplyWithBufferedBlockDispatcher({
     ctx: msgCtx,
     cfg,
     dispatcherOptions: {
       deliver,
-      onReplyStart: () => {
-        log?.info?.(`[openclaw-max] Agent reply started for ${senderName}`);
+      onReplyStart: async () => {
+        // Fires at turn start (and on typing keepalives); startDraft() is
+        // idempotent, so the "working" draft is opened exactly once per turn.
+        await startDraft();
       },
     },
     replyOptions: {
-      onPartialReply: async (payload: { text?: string }) => {
-        if (payload?.text) await onPartialToken(payload.text);
+      turnAdoptionLifecycle,
+      onPartialReply: async (payload: { text?: string; replace?: boolean }) => {
+        if (payload?.text) await onPartialToken(payload.text, payload.replace === true);
       },
       ...(progressEnabled
         ? {
@@ -701,33 +863,57 @@ export function createMaxPlugin(): any {
               ? "audio"
               : "file";
 
-        // Get upload URL from MAX
-        const uploadUrl = await getUploadUrl(
-          account.token,
-          mediaType as "image" | "video" | "audio" | "file",
-        );
-        if (!uploadUrl) throw new Error("Failed to get MAX upload URL");
-
-        // Upload file
-        const uploaded = await uploadFile(
-          uploadUrl,
-          buffer,
-          mimeType ?? "application/octet-stream",
-          filename ?? "file",
-        );
-        if (!uploaded) throw new Error("Failed to upload file to MAX");
-
         const text = caption ?? "";
         const target =
           chatType === "direct" || !chatType ? { user_id: numericId } : { chat_id: numericId };
+        const isDirect = chatType === "direct" || !chatType;
 
-        const mid = await sendMessageWithAttachment(
-          account.token,
-          target,
-          text,
-          mediaType as "image" | "video" | "audio" | "file",
-          uploaded.token,
-        );
+        // Media delivery is best-effort: a failed upload or attachment send must
+        // not kill the whole turn — the caption text still has to reach the chat.
+        let uploaded: { token: string } | null = null;
+        try {
+          const uploadUrl = await getUploadUrl(
+            account.token,
+            mediaType as "image" | "video" | "audio" | "file",
+          );
+          if (uploadUrl) {
+            uploaded = await uploadFile(
+              uploadUrl,
+              buffer,
+              mimeType ?? "application/octet-stream",
+              filename ?? "file",
+            );
+          }
+        } catch (err) {
+          console.warn(
+            `[openclaw-max] media upload failed: ${err instanceof Error ? err.message : err}`,
+          );
+        }
+
+        let mid: string | null = null;
+        if (uploaded) {
+          try {
+            mid = await sendMessageWithAttachment(
+              account.token,
+              target,
+              text,
+              mediaType as "image" | "video" | "audio" | "file",
+              uploaded.token,
+            );
+          } catch (err) {
+            console.warn(
+              `[openclaw-max] attachment send failed: ${err instanceof Error ? err.message : err}`,
+            );
+          }
+        }
+
+        if (!mid) {
+          // Text-only fallback so the turn still delivers something.
+          const fallbackText = text || `[вложение: ${filename ?? mediaType}]`;
+          mid = isDirect
+            ? await sendDm(account.token, numericId, fallbackText)
+            : await sendToChat(account.token, numericId, fallbackText);
+        }
 
         // Stop active typing indicators
         for (const stopFn of activeTypingStops.values()) stopFn();
