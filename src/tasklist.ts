@@ -17,7 +17,9 @@ const CHECK_DONE = "✅";
 const CHECK_ACTIVE = "🔄";
 const CHECK_SKIPPED = "⏭️";
 
-const TASK_LINE = /^(\s*)[-*+]\s+\[( |x|X|~|\/|-)\]\s+(.*)$/;
+// Bullet lists (-, *, +) and ordered lists (1. / 1)) both carry task marks.
+// The space after the closing bracket is optional: models emit `- [ ]step` too.
+const TASK_LINE = /^(\s*)(?:[-*+]|\d+[.)])\s*\[( |x|X|~|\/|-)\]\s*(.*)$/;
 
 function glyphFor(mark: string): string {
   switch (mark) {
@@ -36,7 +38,14 @@ function glyphFor(mark: string): string {
 
 /** Convert markdown task-list lines to visible checklist lines. */
 export function renderTaskList(text: string): string {
-  if (!text || (!text.includes("[ ]") && !text.includes("[x") && !text.includes("[X") && !text.includes("[~"))) {
+  if (
+    !text ||
+    (!text.includes("[ ]") &&
+      !text.includes("[x") &&
+      !text.includes("[X") &&
+      !text.includes("[~") &&
+      !text.includes("[/"))
+  ) {
     return text;
   }
 
@@ -47,7 +56,8 @@ export function renderTaskList(text: string): string {
     const [, indent, mark, body] = match;
     // Nested lists keep their indentation, one level = two spaces.
     changed = true;
-    return `${indent}${glyphFor(mark)} ${body}`;
+    const label = body.trimEnd();
+    return label ? `${indent}${glyphFor(mark)} ${label}` : `${indent}${glyphFor(mark)}`;
   });
 
   return changed ? out.join("\n") : text;

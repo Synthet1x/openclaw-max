@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.0.19] - 2026-11-03
+
+### Fixed
+- **Checklist coverage widened.** `renderTaskList()` now also converts:
+  - ordered lists: `1. [ ]`, `1) [X]` (previously only `-`, `*`, `+`)
+  - lines without a space after the bracket: `- [ ]step`
+  - empty items: `- [ ]` → `⬜`
+  - trailing whitespace is trimmed from the label
+- **Agent hint now advertises checklists.** `messageToolHints` lists bullet/ordered
+  lists and the `- [ ]` / `- [x]` / `- [~]` / `- [-]` task-list marks, states that
+  tables and fenced code blocks are unsupported, and warns that `progress_card`
+  never reaches a MAX chat (use a checklist message instead). Previously the hint
+  named only bold/italic/strikethrough/code/links, so agents never produced
+  checklists at all — the actual cause of the "checkboxes don't render" report.
+
+### Note
+- Verified locally against `dist/`; takes effect after a gateway restart.
+
+---
+
 ## [1.0.15] - 2026-10-19
 
 ### Added
