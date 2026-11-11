@@ -726,6 +726,13 @@ async function deliverMessage(
       // Structured plan stream from the core. This is the reliable animation
       // source: real step statuses, no text parsing, and it fires even when
       // answer streaming is unavailable for the account.
+      //
+      // `suppressDefaultToolProgressMessages` is required alongside it: the core
+      // gates plan/approval callbacks behind `requiresToolSummaryVisibility`, so
+      // when tool summaries are hidden (verbose off, the default) the plan event
+      // is dropped before it ever reaches this channel. Declaring that this
+      // channel owns its own progress UI is what lets the plan through.
+      suppressDefaultToolProgressMessages: true,
       onPlanUpdate: async (payload: { steps?: CorePlanStep[]; title?: string }) => {
         await onPlanUpdate(payload);
       },
