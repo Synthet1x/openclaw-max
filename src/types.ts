@@ -114,6 +114,15 @@ export interface MaxMessageLink {
     mid?: string;
     text?: string;
     attachments?: MaxAttachment[];
+    /** Вложенный объект сообщения из вебхука MAX: содержимое пересылки живёт здесь. */
+    body?: {
+      mid?: string;
+      seq?: number;
+      text?: string;
+      attachments?: MaxAttachment[];
+    };
+    sender?: MaxUser;
+    timestamp?: number;
   };
 }
 

@@ -19,9 +19,13 @@ import type {
   InboundFile,
   WebhookDeliverMsg,
 } from "./types.js";
-import { downloadFile, sendMessageWithKeyboard } from "./client.js";
+import { downloadFile, getMessage, sendMessageWithKeyboard } from "./client.js";
 
 const MAX_BODY_BYTES = 10 * 1024 * 1024; // 10 MB
+
+// Кэш «гидратации» форвардов: оригинал не запрашиваем повторно в течение 10 минут.
+const forwardedCache = new Map<string, { exp: number; text: string; attachments: MaxAttachment[] }>();
+const FORWARDED_CACHE_TTL_MS = 10 * 60 * 1000;
 
 // In-memory deduplication cache: messageId -> timestamp (5 min TTL)
 const seenMessages = new Map<string, number>();
@@ -215,7 +219,10 @@ function unwrapLink(msg: MaxMessage) {
   const isReply = linkType === "reply";
   const originalSenderName = userDisplayName(link.sender);
   const originalSenderId = link.sender?.user_id != null ? String(link.sender.user_id) : null;
-  const linkedBody = link.message && typeof link.message === "object" ? link.message : null;
+  const linkedMessage = link.message && typeof link.message === "object" ? link.message : null;
+  // MAX кладёт содержимое пересылки в link.message.body (text/attachments);
+  // старый формат держал их прямо в link.message — поддерживаем оба.
+  const linkedBody = linkedMessage?.body ?? linkedMessage;
   const linkedText = (linkedBody?.text ?? "").toString().trim();
   const linkedAttachments = Array.isArray(linkedBody?.attachments)
     ? (linkedBody.attachments.filter((a) => a && a.type) as MaxAttachment[])
@@ -731,6 +738,43 @@ export async function handleUpdate(
   }
 
   const linkInfo = unwrapLink(msg);
+
+  // «Чистый» форвард: в вебхуке нет ни текста, ни вложений — добираем оригинал по mid.
+  // ВАЖНО: link.message.mid — внутренний mid из чужого чата, API отдаёт на него 404.
+  // Работает только внешний mid самого форварда (msg.body.mid).
+  if (linkInfo.isForwarded) {
+    const originalMid = msg.body?.mid ?? msg.link?.message?.mid;
+    if (originalMid) {
+      const cached = forwardedCache.get(originalMid);
+      const original = cached && cached.exp > Date.now()
+        ? null
+        : await getMessage(account.token, originalMid);
+      const om: any = original ?? {};
+      const fwdBody: any = om?.link?.message ?? om?.body ?? om;
+      const originalText = (fwdBody?.text ?? om?.body?.text ?? "").toString().trim();
+      const attSource: any[] = Array.isArray(fwdBody?.attachments)
+        ? fwdBody.attachments
+        : Array.isArray(om?.body?.attachments)
+          ? om.body.attachments
+          : [];
+      const originalAtts: MaxAttachment[] = attSource.filter((a: any) => a && a.type);
+      if (originalText) {
+        linkInfo.linkedText = originalText;
+        linkInfo.prefix += `\n${originalText}`;
+      }
+      if (originalAtts.length) linkInfo.linkedAttachments.push(...originalAtts);
+      if (!cached || cached.exp <= Date.now()) {
+        forwardedCache.set(originalMid, {
+          exp: Date.now() + FORWARDED_CACHE_TTL_MS,
+          text: originalText,
+          attachments: originalAtts,
+        });
+      }
+      log?.info?.(
+        `[openclaw-max] Forward hydrated mid=${originalMid}: text=${originalText.length}, attachments=${originalAtts.length}${cached && cached.exp > Date.now() ? " (cache)" : ""}`,
+      );
+    }
+  }
   const bodyText = (msg.body?.text ?? "").toString().trim();
   const bodyAttachments = (msg.body?.attachments ?? []).filter((a) => a && a.type) as MaxAttachment[];
 

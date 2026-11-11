@@ -15,7 +15,7 @@ import tls from "node:tls";
 // different) undici version with UND_ERR_INVALID_ARG. Same-package fetch+Agent
 // are guaranteed compatible.
 import { fetch, FormData, Agent, ProxyAgent, type Dispatcher } from "undici";
-import type { MaxUpdatesResponse } from "./types.js";
+import type { MaxUpdatesResponse, MaxMessage } from "./types.js";
 import { RUSSIAN_TRUSTED_CA } from "./max-ca.js";
 
 const MAX_API = "https://platform-api2.max.ru";
@@ -250,6 +250,20 @@ export async function getBotInfo(token: string): Promise<{ name: string; usernam
  * Защищено от утечки токена (Authorization отправляется только на *.max.ru)
  * и от SSRF-атак на локальную сеть.
  */
+/**
+ * Дотянуть сообщение по mid.
+ * Нужно для «чистых» форвардов: MAX иногда присылает вебхук без текста и вложений,
+ * содержимое оригинала доступно только через GET /messages/{mid}.
+ */
+export async function getMessage(token: string, messageId: string): Promise<MaxMessage | null> {
+  try {
+    const res = await maxRequest<any>(token, "GET", `/messages/${encodeURIComponent(messageId)}`);
+    return ((res && (res.message ?? res)) ?? null) as MaxMessage | null;
+  } catch {
+    return null;
+  }
+}
+
 export async function downloadFile(token: string, url: string): Promise<Buffer | null> {
   try {
     const parsed = new URL(url);
