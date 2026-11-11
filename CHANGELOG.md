@@ -30,6 +30,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     final answer repeats the same checklist, the marks are substituted in place.
 
 ### Fixed
+- **Block streaming is now enabled for MAX, scoped to this channel.** This is what
+  actually makes the animation possible. `agents.defaults.blockStreamingDefault`
+  defaults to `"off"`, and with it off the core never invokes `onPartialReply`, so
+  the whole answer — including any narrated checklist — arrived only at the end in
+  `deliver()`. The animator therefore had no intermediate frames to render and the
+  checkboxes appeared once, already final. Setting `disableBlockStreaming: false`
+  in `replyOptions` turns streaming on for MAX only, without flipping it globally
+  for every channel on the gateway.
+
+  Diagnosis evidence (2026-11-11, live): after a restart with v1.1.0 loaded,
+  `Start draft created` appeared but `Streaming started` and `Plan captured`
+  never fired once — proving `onPartialToken` was never called.
 - **Draft no longer freezes silently on network failure.** Edits were wrapped in
   `.catch(() => {})`, so a failed `PUT /messages` left the draft stuck on a stale
   frame while the turn kept running — indistinguishable from a hung bot. Edits

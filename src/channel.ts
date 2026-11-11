@@ -661,6 +661,16 @@ async function deliverMessage(
     },
     replyOptions: {
       turnAdoptionLifecycle,
+      // Block streaming must be ON for this channel, even though
+      // `agents.defaults.blockStreamingDefault` defaults to "off".
+      //
+      // Without it the core never invokes `onPartialReply`, so the whole answer
+      // (including any checklist the model narrates) arrives only at the end
+      // via `deliver()`. That leaves the stage animator with no intermediate
+      // frames to render — the checkboxes would appear once, already final.
+      // Setting the flag here scopes streaming to MAX instead of flipping it
+      // globally for every channel on the gateway.
+      disableBlockStreaming: false,
       onPartialReply: async (payload: { text?: string; replace?: boolean }) => {
         if (payload?.text) await onPartialToken(payload.text, payload.replace === true);
       },
