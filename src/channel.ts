@@ -42,6 +42,9 @@ import {
   extractPlanHeader,
   hasAnimatablePlan,
   substitutePlan,
+  isAnimatableCorePlan,
+  renderCorePlan,
+  type CorePlanStep,
 } from "./plan.js";
 import type { ResolvedMaxAccount, WebhookDeliverMsg } from "./types.js";
 
@@ -167,6 +170,7 @@ function createStreamingDeliver(
 ): {
   onPartialToken: (text: string, isReplace?: boolean) => Promise<void>;
   onToolProgress: (text: string) => Promise<void>;
+  onPlanUpdate: (payload: { steps?: CorePlanStep[]; title?: string }) => Promise<void>;
   startDraft: () => Promise<void>;
   deliver: (payload: { text?: string; body?: string }) => Promise<void>;
 } {
@@ -186,6 +190,10 @@ function createStreamingDeliver(
   let progressLines: string[] = [];
   /** Live stage animation captured from the plan the model narrated. */
   let animator: StageAnimator | null = null;
+  /** Latest step list emitted by the core plan stream (authoritative when present). */
+  let corePlanSteps: CorePlanStep[] | null = null;
+  /** Title accompanying the core plan stream. */
+  let corePlanTitle = "";
   /** Title line belonging to the captured plan (empty when absent). */
   let planHeader = "";
   /**
@@ -292,8 +300,14 @@ function createStreamingDeliver(
 
   /** Render the current "working" draft body from collected tool lines. */
   function renderProgress(): string {
-    // A captured plan owns the draft: showing the animated checklist makes the
-    // work legible stage by stage instead of a wall of tool names.
+    // A core-emitted plan is authoritative: it carries real statuses, so it can
+    // never disagree with what the agent actually did.
+    if (corePlanSteps && corePlanSteps.length >= 2) {
+      return renderCorePlan(corePlanSteps, corePlanTitle);
+    }
+    // A plan captured from the model's narration owns the draft otherwise:
+    // showing the animated checklist makes the work legible stage by stage
+    // instead of a wall of tool names.
     if (animator) return animator.render(planHeader);
     const lines = progressLines.slice(-6);
     if (lines.length === 0) return "⏳ Работаю…";
@@ -418,6 +432,8 @@ function createStreamingDeliver(
     progressLines = [];
     // A new work segment gets a new plan; never animate the previous one.
     animator = null;
+    corePlanSteps = null;
+    corePlanTitle = "";
     planHeader = "";
     planSealed = false;
     editFailures = 0;
@@ -447,6 +463,39 @@ function createStreamingDeliver(
     animator = new StageAnimator(stages);
     planHeader = extractPlanHeader(text);
     log?.info?.(`[openclaw-max] Plan captured: ${stages.length} stages`);
+  }
+
+  /**
+   * Handle a structured plan emitted by the core (`onPlanUpdate`).
+   *
+   * This is the reliable path: the core sends the agent's own step list with
+   * real statuses, so there is no text parsing, no wording drift, and no
+   * dependency on block streaming being enabled for the channel. The draft is
+   * redrawn on every update, which is what produces the visible stage movement.
+   */
+  async function onPlanUpdate(payload: { steps?: CorePlanStep[]; title?: string }): Promise<void> {
+    const steps = payload?.steps;
+    if (!isAnimatableCorePlan(steps)) return;
+    corePlanSteps = steps as CorePlanStep[];
+    if (payload?.title) corePlanTitle = payload.title;
+    log?.info?.(`[openclaw-max] Plan update: ${steps?.length} steps`);
+
+    // A plan arriving after an answer is a new work segment.
+    if (answerDelivered) await finalizeCurrentDraft();
+
+    if (!messageId) {
+      if (!creationPromise) {
+        creationPromise = (async () => {
+          messageId = await sendReply(account, chatId, chatType, renderProgress());
+          lastEditAt = Date.now();
+          log?.info?.(`[openclaw-max] Plan draft created mid=${messageId}`);
+        })();
+      }
+      await creationPromise;
+      return;
+    }
+
+    await throttledEdit(renderProgress());
   }
 
   /**
@@ -542,7 +591,7 @@ function createStreamingDeliver(
     answerDelivered = true;
   }
 
-  return { onPartialToken, onToolProgress, startDraft, deliver };
+  return { onPartialToken, onToolProgress, onPlanUpdate, startDraft, deliver };
 }
 
 /**
@@ -613,7 +662,7 @@ async function deliverMessage(
   // Disable per account with `progress: false`.
   const progressEnabled = (account as any).progress !== false;
 
-  const { onPartialToken, onToolProgress, startDraft, deliver } = createStreamingDeliver(
+  const { onPartialToken, onToolProgress, onPlanUpdate, startDraft, deliver } = createStreamingDeliver(
     account,
     chatId,
     dialogChatId,
@@ -673,6 +722,12 @@ async function deliverMessage(
       disableBlockStreaming: false,
       onPartialReply: async (payload: { text?: string; replace?: boolean }) => {
         if (payload?.text) await onPartialToken(payload.text, payload.replace === true);
+      },
+      // Structured plan stream from the core. This is the reliable animation
+      // source: real step statuses, no text parsing, and it fires even when
+      // answer streaming is unavailable for the account.
+      onPlanUpdate: async (payload: { steps?: CorePlanStep[]; title?: string }) => {
+        await onPlanUpdate(payload);
       },
       ...(progressEnabled
         ? {

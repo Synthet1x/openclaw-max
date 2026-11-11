@@ -151,3 +151,41 @@ export function substitutePlan(text: string, animator: StageAnimator): string {
   const rendered = animator.render("").split("\n");
   return [...before, ...rendered, ...after].join("\n");
 }
+
+// ─── Core-emitted plans ──────────────────────────────────────────────────────
+//
+// OpenClaw can emit a structured plan stream (`onPlanUpdate`) carrying the
+// agent's own step list with statuses. That is strictly better than parsing the
+// answer text: no wording drift, no half-streamed labels, and it does not depend
+// on block streaming being enabled for the channel.
+
+export type CorePlanStatus = "pending" | "in_progress" | "completed";
+
+export interface CorePlanStep {
+  step: string;
+  status: CorePlanStatus;
+}
+
+const CORE_GLYPH: Record<CorePlanStatus, string> = {
+  pending: "⬜",
+  in_progress: "🔄",
+  completed: "✅",
+};
+
+/** True when a core-emitted plan has enough steps to be worth animating. */
+export function isAnimatableCorePlan(steps: CorePlanStep[] | undefined): boolean {
+  return Array.isArray(steps) && steps.length >= 2;
+}
+
+/** Render a core-emitted plan as checklist glyphs, optionally with a title. */
+export function renderCorePlan(steps: CorePlanStep[], title?: string): string {
+  const lines: string[] = [];
+  if (title) lines.push(title, "");
+  for (const item of steps) {
+    const glyph = CORE_GLYPH[item.status] ?? "⬜";
+    const label = (item.step ?? "").trim();
+    if (!label) continue;
+    lines.push(`${glyph} ${label}`);
+  }
+  return lines.join("\n");
+}
