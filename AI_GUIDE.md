@@ -101,22 +101,35 @@ openclaw channels status
 - `progress_card` never reaches a MAX chat. To show status, post a checklist message.
 
 ### 🟢 How the staged plan animation works (v1.1.0+)
-Ask the agent to split a task into stages, and it narrates a plan such as:
 
-```
-Сделаю поэтапно:
-- [ ] Шаг 1. Приём задачи
-- [ ] Шаг 2. Разбор вводных
-- [ ] Шаг 3. Сборка результата
-- [ ] Шаг 4. Проверка и отправка
-```
+The channel owns the checklist and redraws it in place while the turn runs, so the user
+watches `⬜ → 🔄 → ✅` instead of a static block at the end.
 
-`src/plan.ts` captures it and the channel rewrites the same message while the turn runs,
-so the user watches `⬜ → 🔄 → ✅` instead of a static block at the end.
+**Two sources, in priority order:**
 
-Rules that matter when operating this:
-- Any message with **at least two** task-list items is captured. No prompt convention,
-  no config flag, no extra tool call.
+1. **Core plan stream (`onPlanUpdate`) — authoritative.** OpenClaw projects the
+   `progress_card` tool into a structured plan event:
+   ```ts
+   { steps: [{ step: "Сбор данных", status: "in_progress" }], title: "…" }
+   // status: "pending" | "in_progress" | "completed"
+   ```
+   Real statuses, no text parsing, cannot disagree with what the agent did.
+2. **Narration capture — fallback.** Any answer with **at least two** task-list items
+   (`- [ ]` / `- [x]` / `- [~]`) is captured and animated the same way.
+
+**Two channel flags make this work — do not remove them:**
+
+| Flag | Why |
+|---|---|
+| `disableBlockStreaming: false` | `agents.defaults.blockStreamingDefault` defaults to `"off"`; with it off the core never calls `onPartialReply`, so no intermediate frames exist for the narration path. |
+| `suppressDefaultToolProgressMessages: true` | The core gates plan events behind `requiresToolSummaryVisibility`. With verbose off (default) tool summaries are hidden, so **every plan event is discarded upstream** before the plugin runs. Declaring this flag states the channel owns its own progress UI. |
+
+Without the second flag `onPlanUpdate` is wired but silently never invoked — the exact
+failure mode observed on 2026-11-11, where `Plan update` stayed at zero across restarts
+while `Start draft created` fired normally.
+
+**Behaviour rules:**
+- **Core plan wins** when both sources are present, because it carries real statuses.
 - **Capture is streaming-safe.** A later, more complete plan replaces an earlier partial
   one. The **first tool result seals** the plan, so labels cannot shift mid-animation.
 - **Advancement is work-paced:** each tool result retires the current stage and promotes
@@ -124,14 +137,33 @@ Rules that matter when operating this:
   lie about progress.
 - `deliver()` closes the animation — all stages become `✅`. If the final answer repeats the
   same checklist, marks are substituted in place.
-- Edits are throttled to one `PUT` per **800 ms** (`STREAM_EDIT_INTERVAL_MS`).
+- Edits are throttled to one `PUT` per **800 ms** (`STREAM_EDIT_INTERVAL_MS`). The API
+  allows roughly two messages per second per dialog.
 - Set `channels.max.accounts.<id>.progress: false` to disable the whole live draft
   (including animation); the checklist then only appears in the final answer.
+
+**Requirement:** the agent must emit `progress_card`. A markdown checklist typed into the
+answer body renders as static glyphs but carries no plan event, so it does not animate.
+That is core behaviour, not a plugin limitation — do not "fix" it by parsing answer text
+alone.
+
+### 🟡 Gotcha 6: bots cannot use server-side emoji animation
+MAX clients animate some Unicode emoji on their own, but that does **not** reach bot
+messages:
+
+- A symbol sent through Bot API arrives as plain text with **zero attachments**
+  (`✅` → U+2705), and the client renders it statically for bots.
+- The attachment types MAX accepts are `image`, `video`, `audio`, `file`, `sticker`,
+  `contact`, `inline_keyboard`, `share`, `location` — there is no "animated emoji" type.
+- Therefore frame-by-frame redraw is the only way to animate in-line glyphs. Probed
+  2026-11-11 with a 24-emoji set; the user confirmed none animated for the bot.
 
 Troubleshooting: if the draft looks frozen mid-turn, grep the log for
 `Draft edits failing` — that means `PUT /messages` is failing (usually DNS/network to
 `botapi.max.ru`) and the draft is showing a stale frame. From v1.1.0 the failure is logged
 at 3 consecutive errors and recovery is logged too, instead of being swallowed silently.
+If the checklist never moves but the draft updates, grep for `Plan update` — a zero count
+means the visibility gate is blocking the plan stream.
 
 ---
 

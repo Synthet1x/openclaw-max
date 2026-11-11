@@ -43,8 +43,24 @@ MAX has no native checkbox entity and no message-editing UI of its own, so a
 1. `PUT /messages?message_id=…` rewrites one message in place;
 2. the glyphs `⬜` / `🔄` / `✅` / `⏭️` read as a checklist on every MAX client.
 
-Ask the agent to split a task into stages, and it narrates a normal markdown
-task list:
+The channel owns the checklist and redraws it as work progresses, so the user
+watches `⬜ → 🔄 → ✅` instead of receiving a static block at the end.
+
+### Two sources, in priority order
+
+**1. Core plan stream (authoritative).** OpenClaw projects the `progress_card`
+tool into a structured plan event carrying real statuses:
+
+```ts
+{ steps: [{ step: "Сбор данных", status: "in_progress" }], title: "…" }
+// status: "pending" | "in_progress" | "completed"
+```
+
+Handled via `onPlanUpdate`. No text parsing, no wording drift, and it cannot
+disagree with what the agent actually did.
+
+**2. Narration capture (fallback).** Any answer carrying at least two task-list
+items is captured and animated the same way:
 
 ```
 Сделаю поэтапно:
@@ -54,9 +70,7 @@ task list:
 - [ ] Шаг 4. Проверка и отправка
 ```
 
-The channel captures that plan and then advances it while the turn actually
-runs — the message is edited in place, so the user watches the stages move
-instead of receiving a static block at the end:
+→ redrawn in place as:
 
 ```
 ✅ Шаг 1. Приём задачи
@@ -65,18 +79,35 @@ instead of receiving a static block at the end:
 ⬜ Шаг 4. Проверка и отправка
 ```
 
-Design notes:
+### Design notes
 
-- **No prompt convention required.** Any message carrying at least two task-list
-  items is captured; `progress_card` is not involved and never reaches a MAX chat.
-- **Streaming-safe capture.** While the model is still emitting the plan, a more
+- **Core plan wins.** When both sources are present the structured one is used,
+  because it carries real statuses rather than inferred ones.
+- **Streaming-safe capture.** While the model is still emitting a plan, a more
   complete later version replaces the earlier one. The first tool result seals
-  the plan so labels cannot shift mid-animation.
+  it so labels cannot shift mid-animation.
 - **Work-paced, not timer-paced.** Each tool result retires the current stage and
   promotes the next, so the checklist reflects real progress rather than elapsed
   time.
 - **Closed on delivery.** A finished turn marks every stage `✅`.
 - **Throttled edits.** At most one `PUT` per 800 ms, to respect MAX rate limits.
+  The API allows roughly two messages per second per dialog.
+
+### Requirements and limits
+
+- Animation needs the agent to emit `progress_card`. A markdown checklist typed
+  into the answer body renders as static glyphs and carries no plan event, so it
+  does not animate. That is core behaviour, not a plugin limitation.
+- Two channel-level flags make it work, both set by the plugin: `disableBlockStreaming: false`
+  and `suppressDefaultToolProgressMessages: true`. Without the second one the
+  core discards plan events whenever tool summaries are hidden, which is the
+  default.
+- **Server-side emoji animation is not available to bots.** MAX clients animate
+  some Unicode emoji, but a symbol sent through Bot API arrives as plain text
+  with zero attachments and is rendered statically for bot messages. To animate
+  in-line glyphs the channel must redraw frames itself.
+- Verified 2026-11-11: `Plan update: 4 steps` on every `progress_card` update,
+  24 consecutive draft edits with zero `editMessage error`.
 
 ## Installation
 

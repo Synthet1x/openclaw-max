@@ -10,11 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.1.0] - 2026-11-11
 
 ### Added
-- **Staged plan animation.** When the agent narrates a checklist plan
-  (`- [ ]` / `- [x]` / `- [~]`), the channel now captures it and advances the
-  stages live inside one editable message: `⬜ → 🔄 → ✅`. Previously a plan was
-  rendered once as static glyphs and never moved, which read as "checkboxes
-  don't animate".
+- **Staged plan animation.** The channel now renders the agent's plan as a live
+  checklist inside one editable message and advances it stage by stage:
+  `⬜ → 🔄 → ✅`. Previously a plan was rendered once as static glyphs and never
+  moved, which read as "checkboxes don't animate".
+
+  Two sources feed the animation, in priority order:
+
+  1. **Core plan stream (`onPlanUpdate`)** — authoritative. The core projects the
+     `progress_card` tool into a structured plan event carrying
+     `{ steps: [{ step, status }], title }` with real statuses
+     (`pending | in_progress | completed`). No text parsing, no wording drift.
+  2. **Narration capture** — fallback. Any answer carrying at least two task-list
+     items (`- [ ]` / `- [x]` / `- [~]`) is captured and animated the same way.
   - New module `src/plan.ts`: pure state machine (`StageAnimator`) plus
     `extractPlan` / `extractPlanHeader` / `hasAnimatablePlan` / `substitutePlan`.
     No network, no timers, no logging — trivially unit-testable.
@@ -30,18 +38,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     final answer repeats the same checklist, the marks are substituted in place.
 
 ### Fixed
-- **Block streaming is now enabled for MAX, scoped to this channel.** This is what
-  actually makes the animation possible. `agents.defaults.blockStreamingDefault`
-  defaults to `"off"`, and with it off the core never invokes `onPartialReply`, so
-  the whole answer — including any narrated checklist — arrived only at the end in
-  `deliver()`. The animator therefore had no intermediate frames to render and the
-  checkboxes appeared once, already final. Setting `disableBlockStreaming: false`
-  in `replyOptions` turns streaming on for MAX only, without flipping it globally
-  for every channel on the gateway.
+- **Plan events were dropped before reaching the channel (the real root cause).**
+  `onPlanUpdate` was wired correctly but never invoked. The core gates plan and
+  approval progress callbacks behind `requiresToolSummaryVisibility`: a callback
+  is forwarded only when tool summaries are visible **or** the channel declares
+  `suppressDefaultToolProgressMessages`. With verbose off (the default) summaries
+  are hidden, so every plan event was discarded in `dispatch-from-config` before
+  the plugin ever saw it.
 
-  Diagnosis evidence (2026-11-11, live): after a restart with v1.1.0 loaded,
-  `Start draft created` appeared but `Streaming started` and `Plan captured`
-  never fired once — proving `onPartialToken` was never called.
+  Declaring `suppressDefaultToolProgressMessages: true` states that this channel
+  owns its own progress UI — which it does: the editable draft. Chain now works
+  end to end:
+
+  ```
+  progress_card → core plan event → visibility gate → onPlanUpdate
+                → renderCorePlan → PUT /messages edit
+  ```
+
+  Diagnosis evidence (2026-11-11, live): `Plan update` was a stable zero across
+  restarts while `Start draft created` fired normally — proving the event died
+  upstream, not in this plugin. After the fix: `Plan update: 4 steps` fired on
+  every `progress_card` update, with zero `editMessage error`.
+- **Block streaming is now enabled for MAX, scoped to this channel.**
+  `agents.defaults.blockStreamingDefault` defaults to `"off"`, and with it off
+  the core never invokes `onPartialReply`, so the whole answer arrived only at the
+  end in `deliver()` — leaving the narration-capture path with no intermediate
+  frames. Setting `disableBlockStreaming: false` in `replyOptions` turns streaming
+  on for MAX only, without flipping it globally for every channel on the gateway.
+  Verified no duplicate delivery: `shouldDropFinalPayloads` drops the final
+  payload when the block pipeline already streamed it.
 - **Draft no longer freezes silently on network failure.** Edits were wrapped in
   `.catch(() => {})`, so a failed `PUT /messages` left the draft stuck on a stale
   frame while the turn kept running — indistinguishable from a hung bot. Edits
@@ -50,13 +75,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `editMessage error: fetch failed` during a DNS blip, with the user asking "did
   it hang?" because the draft showed nothing.
 - **Stale plan across work segments.** A steered follow-up or a second work
-  segment now resets the animator, header and failure counter, so the previous
-  turn's checklist can never animate into the next answer.
+  segment now resets the animator, core plan, header and failure counter, so the
+  previous turn's checklist can never animate into the next answer.
 
 ### Note
+- Staged animation requires the agent to emit `progress_card`. A markdown
+  checklist typed into the answer body renders as static glyphs but carries no
+  plan event, so it does not animate — that is a core behaviour, not a plugin
+  limitation.
 - `capabilities.edit` remains `false`: OpenClaw's generic `message(action:"edit")`
   path is still unsupported for MAX. Animation uses `PUT /messages` directly, so
   it is unaffected. Exposing generic editing is tracked separately.
+- **Server-side emoji animation is not available to bots.** MAX clients animate
+  some Unicode emoji, but a symbol sent through Bot API arrives as plain text
+  with no attachment (`✅` → U+2705, zero attachments) and is rendered statically
+  for bot messages. Frame-by-frame redraw is therefore the only way to animate
+  in-line glyphs. Verified 2026-11-11 against a 24-emoji probe set.
 - Verified with `tsc --noEmit` and a clean `tsc` build; takes effect after a
   gateway restart.
 
