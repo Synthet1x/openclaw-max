@@ -86,6 +86,53 @@ openclaw channels status
 - If `plugins.allow` is present in `openclaw.json`, it acts as an exclusive whitelist. Any plugin not listed there (including Telegram, Discord, MAX) will be blocked from loading.
 - Instead, simply enable the plugin via `plugins.entries.max.enabled = true`.
 
+### 🟡 Gotcha 5: MAX has no native checkbox — and no `reactions`/`edit` capability
+- Markdown task lists do **not** survive on their own: `- [ ] text` would arrive as literal
+  text. `renderTaskList()` converts them to glyphs that every MAX client shows correctly:
+  - `- [ ]` → `⬜` pending
+  - `- [x]` / `- [X]` → `✅` done
+  - `- [~]` / `- [/]` → `🔄` in progress
+  - `- [-]` → `⏭️` skipped
+  - Bullet (`-`, `*`, `+`) **and** ordered (`1.`, `1)`) lists are supported, with or without a
+    space after the bracket.
+- `capabilities.edit` is `false`, so the generic `message(action:"edit")` path returns
+  `Unknown target "max:<id>"`. **Do not** try to edit MAX messages through the generic
+  message tool. Animation uses `PUT /messages?message_id=…` internally instead.
+- `progress_card` never reaches a MAX chat. To show status, post a checklist message.
+
+### 🟢 How the staged plan animation works (v1.1.0+)
+Ask the agent to split a task into stages, and it narrates a plan such as:
+
+```
+Сделаю поэтапно:
+- [ ] Шаг 1. Приём задачи
+- [ ] Шаг 2. Разбор вводных
+- [ ] Шаг 3. Сборка результата
+- [ ] Шаг 4. Проверка и отправка
+```
+
+`src/plan.ts` captures it and the channel rewrites the same message while the turn runs,
+so the user watches `⬜ → 🔄 → ✅` instead of a static block at the end.
+
+Rules that matter when operating this:
+- Any message with **at least two** task-list items is captured. No prompt convention,
+  no config flag, no extra tool call.
+- **Capture is streaming-safe.** A later, more complete plan replaces an earlier partial
+  one. The **first tool result seals** the plan, so labels cannot shift mid-animation.
+- **Advancement is work-paced:** each tool result retires the current stage and promotes
+  the next. It is not a blind timer, so a fast turn advances quickly and a slow one does not
+  lie about progress.
+- `deliver()` closes the animation — all stages become `✅`. If the final answer repeats the
+  same checklist, marks are substituted in place.
+- Edits are throttled to one `PUT` per **800 ms** (`STREAM_EDIT_INTERVAL_MS`).
+- Set `channels.max.accounts.<id>.progress: false` to disable the whole live draft
+  (including animation); the checklist then only appears in the final answer.
+
+Troubleshooting: if the draft looks frozen mid-turn, grep the log for
+`Draft edits failing` — that means `PUT /messages` is failing (usually DNS/network to
+`botapi.max.ru`) and the draft is showing a stale frame. From v1.1.0 the failure is logged
+at 3 consecutive errors and recovery is logged too, instead of being swallowed silently.
+
 ---
 
 ## 4. Multi-Account Setup (Multiple MAX Bots)

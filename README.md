@@ -25,6 +25,8 @@ This project is a community-driven fork of the original [@olegbalbekov/openclaw-
 - DM and group chat support
 - Long polling (default, works without public IP/domain) and Webhook modes
 - Streaming replies with typing indicator
+- **Live staged plan animation:** checklists advance `⬜ → 🔄 → ✅` inside one editable message
+- Markdown task lists rendered as visible checklists (MAX has no native checkbox)
 - Full media sending and receiving (documents, images, video, audio)
 - Voice notes reception & STT transcription (in Webhook mode)
 - Allowlist-based access control
@@ -32,6 +34,49 @@ This project is a community-driven fork of the original [@olegbalbekov/openclaw-
 - Interactive menus & inline keyboards: `/models`, `/model`, `/think`, `/fast`, `/reasoning`, `/tts`, `/verbose`, `/usage`
 
 > 💡 **For AI Agents & Automation:** See [AI_GUIDE.md](./AI_GUIDE.md) for detailed gotchas, edge cases, and automated troubleshooting instructions.
+
+## Live Staged Plan Animation
+
+MAX has no native checkbox entity and no message-editing UI of its own, so a
+"live" checklist is built from two primitives the Bot API does expose:
+
+1. `PUT /messages?message_id=…` rewrites one message in place;
+2. the glyphs `⬜` / `🔄` / `✅` / `⏭️` read as a checklist on every MAX client.
+
+Ask the agent to split a task into stages, and it narrates a normal markdown
+task list:
+
+```
+Сделаю поэтапно:
+- [ ] Шаг 1. Приём задачи
+- [ ] Шаг 2. Разбор вводных
+- [ ] Шаг 3. Сборка результата
+- [ ] Шаг 4. Проверка и отправка
+```
+
+The channel captures that plan and then advances it while the turn actually
+runs — the message is edited in place, so the user watches the stages move
+instead of receiving a static block at the end:
+
+```
+✅ Шаг 1. Приём задачи
+🔄 Шаг 2. Разбор вводных
+⬜ Шаг 3. Сборка результата
+⬜ Шаг 4. Проверка и отправка
+```
+
+Design notes:
+
+- **No prompt convention required.** Any message carrying at least two task-list
+  items is captured; `progress_card` is not involved and never reaches a MAX chat.
+- **Streaming-safe capture.** While the model is still emitting the plan, a more
+  complete later version replaces the earlier one. The first tool result seals
+  the plan so labels cannot shift mid-animation.
+- **Work-paced, not timer-paced.** Each tool result retires the current stage and
+  promotes the next, so the checklist reflects real progress rather than elapsed
+  time.
+- **Closed on delivery.** A finished turn marks every stage `✅`.
+- **Throttled edits.** At most one `PUT` per 800 ms, to respect MAX rate limits.
 
 ## Installation
 

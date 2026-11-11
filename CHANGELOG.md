@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.1.0] - 2026-11-11
+
+### Added
+- **Staged plan animation.** When the agent narrates a checklist plan
+  (`- [ ]` / `- [x]` / `- [~]`), the channel now captures it and advances the
+  stages live inside one editable message: `⬜ → 🔄 → ✅`. Previously a plan was
+  rendered once as static glyphs and never moved, which read as "checkboxes
+  don't animate".
+  - New module `src/plan.ts`: pure state machine (`StageAnimator`) plus
+    `extractPlan` / `extractPlanHeader` / `hasAnimatablePlan` / `substitutePlan`.
+    No network, no timers, no logging — trivially unit-testable.
+  - A plan is captured from the model's own narration, so no extra tool call or
+    prompt convention is required; any message carrying at least two checklist
+    items qualifies.
+  - While the plan is still streaming in, later (more complete) versions replace
+    earlier ones. The first tool result **seals** the plan, after which it cannot
+    change mid-animation.
+  - Each tool result retires the current stage and promotes the next, so the
+    checklist advances at the pace of real work rather than on a blind timer.
+  - `deliver()` closes the animation: every stage becomes `✅` and, when the
+    final answer repeats the same checklist, the marks are substituted in place.
+
+### Fixed
+- **Draft no longer freezes silently on network failure.** Edits were wrapped in
+  `.catch(() => {})`, so a failed `PUT /messages` left the draft stuck on a stale
+  frame while the turn kept running — indistinguishable from a hung bot. Edits
+  now go through `applyEdit()`, which counts consecutive failures, logs a warning
+  at 3, and logs recovery. Observed live on 2026-11-11: 13 consecutive
+  `editMessage error: fetch failed` during a DNS blip, with the user asking "did
+  it hang?" because the draft showed nothing.
+- **Stale plan across work segments.** A steered follow-up or a second work
+  segment now resets the animator, header and failure counter, so the previous
+  turn's checklist can never animate into the next answer.
+
+### Note
+- `capabilities.edit` remains `false`: OpenClaw's generic `message(action:"edit")`
+  path is still unsupported for MAX. Animation uses `PUT /messages` directly, so
+  it is unaffected. Exposing generic editing is tracked separately.
+- Verified with `tsc --noEmit` and a clean `tsc` build; takes effect after a
+  gateway restart.
+
+---
+
 ## [1.0.19] - 2026-11-03
 
 ### Fixed

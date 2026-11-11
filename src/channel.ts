@@ -36,6 +36,13 @@ import {
 import { getMaxRuntime } from "./runtime.js";
 import { createWebhookHandler, handleUpdate } from "./webhook-handler.js";
 import { renderTaskList } from "./tasklist.js";
+import {
+  StageAnimator,
+  extractPlan,
+  extractPlanHeader,
+  hasAnimatablePlan,
+  substitutePlan,
+} from "./plan.js";
 import type { ResolvedMaxAccount, WebhookDeliverMsg } from "./types.js";
 
 const CHANNEL_ID = "max";
@@ -177,6 +184,20 @@ function createStreamingDeliver(
   let answerDelivered = false;
   /** Rolling tool-activity lines shown in the "working" draft. */
   let progressLines: string[] = [];
+  /** Live stage animation captured from the plan the model narrated. */
+  let animator: StageAnimator | null = null;
+  /** Title line belonging to the captured plan (empty when absent). */
+  let planHeader = "";
+  /**
+   * True once the plan can no longer change.
+   *
+   * The model streams a plan line by line, so an early capture sees only the
+   * first couple of stages. Until real work advances the plan we keep accepting
+   * a longer version, otherwise a 4-step plan would animate as 2 steps.
+   */
+  let planSealed = false;
+  /** Consecutive edit failures, used to surface a stuck draft instead of silence. */
+  let editFailures = 0;
 
   const numericDialogChatId = parseInt(dialogChatId, 10);
   let typingInterval: ReturnType<typeof setInterval> | null = null;
@@ -202,21 +223,44 @@ function createStreamingDeliver(
 
   activeTypingStops.set(instanceKey, stopTyping);
 
+  /**
+   * Apply one edit, tolerating network failure.
+   *
+   * A failed edit used to be swallowed by `.catch(() => {})`, which left the
+   * draft frozen on a stale frame while the turn kept running — the exact
+   * "бот подвис" symptom. Counting consecutive failures lets the draft say so
+   * instead of silently lying about progress.
+   */
+  async function applyEdit(text: string): Promise<void> {
+    if (!messageId) return;
+    const ok = await editMessage(account.token, messageId, renderTaskList(text)).catch(() => false);
+    if (ok) {
+      if (editFailures >= 3) {
+        log?.info?.(`[openclaw-max] Draft edits recovered after ${editFailures} failures`);
+      }
+      editFailures = 0;
+    } else {
+      editFailures += 1;
+      if (editFailures === 3) {
+        log?.warn?.(`[openclaw-max] Draft edits failing (${editFailures}x); draft may be stale`);
+      }
+    }
+    lastEditAt = Date.now();
+  }
+
   async function throttledEdit(text: string) {
     if (!messageId) return;
     const elapsed = Date.now() - lastEditAt;
     if (pendingEdit) clearTimeout(pendingEdit);
     if (elapsed >= STREAM_EDIT_INTERVAL_MS) {
-      await editMessage(account.token, messageId, renderTaskList(text));
-      lastEditAt = Date.now();
+      await applyEdit(text);
       if (typingInterval !== null) {
         sendTypingAction(account.token, numericDialogChatId).catch(() => {});
       }
     } else {
       pendingEdit = setTimeout(async () => {
         if (messageId) {
-          await editMessage(account.token, messageId, renderTaskList(text)).catch(() => {});
-          lastEditAt = Date.now();
+          await applyEdit(text);
           if (typingInterval !== null) {
             sendTypingAction(account.token, numericDialogChatId).catch(() => {});
           }
@@ -248,6 +292,9 @@ function createStreamingDeliver(
 
   /** Render the current "working" draft body from collected tool lines. */
   function renderProgress(): string {
+    // A captured plan owns the draft: showing the animated checklist makes the
+    // work legible stage by stage instead of a wall of tool names.
+    if (animator) return animator.render(planHeader);
     const lines = progressLines.slice(-6);
     if (lines.length === 0) return "⏳ Работаю…";
     return ["⏳ Работаю…", "", ...lines].join("\n");
@@ -301,6 +348,14 @@ function createStreamingDeliver(
     segmentHadTool = true;
     // The answer preview owns the message once it starts streaming.
     if (answerStarted) return;
+
+    // Each new tool result is one unit of work: retire the current stage and
+    // promote the next so the checklist visibly advances while the turn runs.
+    if (animator && !animator.finished) {
+      // Real work starting freezes the plan: a later stream cannot add stages.
+      planSealed = true;
+      animator.advance();
+    }
 
     if (!messageId) {
       if (!creationPromise) {
@@ -361,9 +416,50 @@ function createStreamingDeliver(
     answerDelivered = false;
     segmentHadTool = false;
     progressLines = [];
+    // A new work segment gets a new plan; never animate the previous one.
+    animator = null;
+    planHeader = "";
+    planSealed = false;
+    editFailures = 0;
     // Let the next work segment open its own "⏳ Работаю…" draft.
     startDraftDone = false;
     creationPromise = null;
+  }
+
+  /**
+   * Capture the checklist the model narrates into an animator, once per turn.
+   *
+   * MAX renders a markdown task list as static glyphs, so the only way to make
+   * stages visibly progress is to own the list and rewrite it as work happens.
+   * Capture is idempotent: the first plan seen wins, and a later re-wording of
+   * the same list does not restart the animation.
+   */
+  function capturePlan(text: string, isReplace: boolean): void {
+    if (planSealed) return;
+    if (isReplace) return;
+    if (!hasAnimatablePlan(text)) return;
+    const stages = extractPlan(text);
+    if (stages.length < 2) return;
+    // While the plan is still streaming in, labels can be truncated mid-line and
+    // later stages can be missing. Adopt any changed version until real work
+    // seals it, otherwise a half-written stage would freeze under the wrong text.
+    if (animator && animator.matches(stages)) return;
+    animator = new StageAnimator(stages);
+    planHeader = extractPlanHeader(text);
+    log?.info?.(`[openclaw-max] Plan captured: ${stages.length} stages`);
+  }
+
+  /**
+   * Body for one streaming frame.
+   *
+   * While a plan is being animated the checklist inside the streamed text is
+   * replaced by the animator's marks, so the stages move even though the model
+   * only ever emitted a static list. Everything outside the checklist streams
+   * verbatim.
+   */
+  function streamBody(text: string): string {
+    if (animator && animator.size >= 2) return `${substitutePlan(text, animator)} …`;
+    return `${text} …`;
   }
 
   async function onPartialToken(text: string, isReplace = false) {
@@ -377,10 +473,14 @@ function createStreamingDeliver(
     answerStarted = true;
     accumulated = text;
 
+    // Capture the plan the first time the model narrates one, so every later
+    // frame can animate the same checklist instead of showing raw tool noise.
+    capturePlan(text, isReplace);
+
     if (!messageId) {
       if (!creationPromise) {
         creationPromise = (async () => {
-          messageId = await sendReply(account, chatId, chatType, accumulated + " …");
+          messageId = await sendReply(account, chatId, chatType, streamBody(accumulated));
           lastEditAt = Date.now();
           log?.info?.(`[openclaw-max] Streaming started mid=${messageId}`);
         })();
@@ -389,7 +489,7 @@ function createStreamingDeliver(
       return;
     }
 
-    await throttledEdit(accumulated + " …");
+    await throttledEdit(streamBody(accumulated));
   }
 
   async function deliver(payload: any) {
@@ -409,16 +509,28 @@ function createStreamingDeliver(
 
     const keyboardButtons = resolvePayloadKeyboardButtons(payload);
 
+    // The turn is finished, so every stage of the captured plan is complete.
+    // Without this the last stage would sit on 🔄 forever, which reads as a
+    // checklist that never finished.
+    let finalBody = finalText;
+    if (animator) {
+      animator.complete();
+      const answerPlan = extractPlan(finalText);
+      if (answerPlan.length >= 2 && animator.matches(answerPlan)) {
+        finalBody = substitutePlan(finalText, animator);
+      }
+    }
+
     if (messageId) {
       // If we have inline buttons, edit with buttons
-      await editMessage(account.token, messageId, renderTaskList(finalText), keyboardButtons ? [toInlineKeyboardAttachment(keyboardButtons)] : undefined);
+      await editMessage(account.token, messageId, renderTaskList(finalBody), keyboardButtons ? [toInlineKeyboardAttachment(keyboardButtons)] : undefined);
     } else {
       if (keyboardButtons && keyboardButtons.length > 0) {
         const numericId = parseInt(chatId, 10);
         const target = chatType === "direct" ? { user_id: numericId } : { chat_id: numericId };
-        await sendMessageWithKeyboard(account.token, target, renderTaskList(finalText), keyboardButtons);
+        await sendMessageWithKeyboard(account.token, target, renderTaskList(finalBody), keyboardButtons);
       } else {
-        await sendReply(account, chatId, chatType, finalText);
+        await sendReply(account, chatId, chatType, finalBody);
       }
     }
 
@@ -835,7 +947,7 @@ export function createMaxPlugin(): any {
         const numericId = parseInt(to.replace(/^max:(?:user:|group:)?/i, ""), 10);
         if (isNaN(numericId)) throw new Error(`Invalid MAX recipient ID: ${to}`);
 
-        const ok = await sendDm(account.token, numericId, text);
+        const ok = await sendDm(account.token, numericId, renderTaskList(text));
         if (!ok) throw new Error("Failed to send MAX message");
         return { channel: CHANNEL_ID, messageId: `max-${Date.now()}`, chatId: to };
       },
@@ -912,9 +1024,10 @@ export function createMaxPlugin(): any {
         if (!mid) {
           // Text-only fallback so the turn still delivers something.
           const fallbackText = text || `[вложение: ${filename ?? mediaType}]`;
+          const renderedFallback = renderTaskList(fallbackText);
           mid = isDirect
-            ? await sendDm(account.token, numericId, fallbackText)
-            : await sendToChat(account.token, numericId, fallbackText);
+            ? await sendDm(account.token, numericId, renderedFallback)
+            : await sendToChat(account.token, numericId, renderedFallback);
         }
 
         // Stop active typing indicators
