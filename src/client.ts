@@ -155,6 +155,28 @@ export async function editMessage(
 }
 
 /**
+ * Delete a message.
+ * DELETE /messages?message_id={id}
+ *
+ * Used to retire a "working" draft when the user wrote while it was alive:
+ * the final answer is then re-sent as a new message at the bottom of the chat
+ * instead of editing the buried draft in place. Returns false on any failure
+ * (including deleting an already-deleted message) so the caller can fall back
+ * to an in-place edit — the answer must never be lost or duplicated.
+ */
+export async function deleteMessage(token: string, messageId: string): Promise<boolean> {
+  try {
+    const res = await maxRequest<{ success?: boolean }>(
+      token, "DELETE", "/messages", { message_id: messageId },
+    );
+    return res?.success !== false;
+  } catch (err) {
+    console.warn(`[openclaw-max] deleteMessage error: ${err instanceof Error ? err.message : err}`);
+    return false;
+  }
+}
+
+/**
  * Send typing indicator to a chat.
  * action: "typing_on" | "typing_off" | "sending_photo" | "sending_video" | "sending_audio"
  */

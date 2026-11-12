@@ -147,6 +147,22 @@ answer body renders as static glyphs but carries no plan event, so it does not a
 That is core behaviour, not a plugin limitation — do not "fix" it by parsing answer text
 alone.
 
+### 🟢 Buried final answer fix (v1.1.1+)
+
+The live draft is edited in place, so if the user writes while a turn runs, their
+messages land **below** the draft and an in-place final edit would leave the answer
+buried mid-history. Since v1.1.1 the channel counts inbound messages per account+chat
+and snapshots the counter when each draft opens:
+
+- **User wrote during work** → the draft is deleted (`DELETE /messages`) and the final
+  answer is sent as a new message at the bottom of the chat.
+- **Nobody wrote** → in-place edit, exactly as before.
+- **Delete fails** → fallback to the in-place edit (never lose or duplicate the answer).
+
+The baseline is re-captured for every new draft (each work segment), partial answers
+frozen by steering get the same treatment, and a repeated final callback is a no-op.
+Offline tests: `npm test` (fake MAX client, no network).
+
 ### 🟡 Gotcha 6: bots cannot use server-side emoji animation
 MAX clients animate some Unicode emoji on their own, but that does **not** reach bot
 messages:

@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.1.1] - 2026-11-12
+
+### Fixed
+- **Buried final answer.** When the user sent messages while a turn was
+  running, the final answer used to edit the "⏳ Работаю…" draft in place,
+  leaving it visually stuck above the user's newer messages. The channel now
+  counts inbound messages per account+chat (`bumpInboundSeq`) and snapshots
+  the counter whenever a draft is opened. At finalization:
+  - user wrote during the draft's lifetime → the draft is deleted
+    (`DELETE /messages?message_id=…`, new `deleteMessage()` client helper) and
+    the final answer is sent as a **new message at the bottom** of the chat;
+  - nobody wrote → the draft is edited in place as before (no flicker);
+  - deletion failed → graceful fallback to the in-place edit, so the answer is
+    never lost or duplicated.
+  The same treatment applies to partial answers frozen when a steered
+  follow-up opens a new answer block, and to every new work segment (the
+  inbound baseline is re-captured per draft). A repeated final callback for an
+  already-delivered answer is now a no-op. A fresh send that fails right after
+  a successful deletion is retried once.
+
+### Added
+- `test/` — offline unit tests for the streaming deliverer (fake MAX client
+  injected via a module loader hook): `npm test`. Covers quiet turns, buried
+  finals, delete-failure fallback, multi-segment baselines, duplicate finals,
+  buried partials, inline keyboards, and send-retry. Plus
+  `test/live-delete-check.mjs` for a real-API DELETE round-trip.
+
+---
+
 ## [1.1.0] - 2026-11-11
 
 ### Added

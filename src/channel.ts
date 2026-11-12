@@ -24,6 +24,7 @@ import {
   sendToChat,
   sendMessageWithAttachment,
   editMessage,
+  deleteMessage,
   sendTypingAction,
   getUpdates,
   subscribeWebhook,
@@ -53,6 +54,25 @@ const CHANNEL_ID = "max";
 /** Active typing-stop callbacks keyed by unique instance id — lets sendMedia stop all typing */
 const activeTypingStops = new Map<string, () => void>();
 let typingStopSeq = 0;
+
+/**
+ * Monotonic inbound counter per account+chat, bumped for every user message
+ * (or button callback) dispatched into a turn. A streaming deliverer snapshots
+ * it when it opens a draft; a higher value at finalization means the user
+ * wrote while the draft was alive, so the draft is buried above their messages
+ * and the answer must be re-sent at the bottom instead of edited in place.
+ * Exported for unit tests.
+ */
+const inboundSeqByChat = new Map<string, number>();
+
+export function bumpInboundSeq(accountId: string, chatId: string): void {
+  const key = `${accountId}:${chatId}`;
+  inboundSeqByChat.set(key, (inboundSeqByChat.get(key) ?? 0) + 1);
+}
+
+export function inboundSeqFor(accountId: string, chatId: string): number {
+  return inboundSeqByChat.get(`${accountId}:${chatId}`) ?? 0;
+}
 
 const MaxAccountSchema = z
   .object({
@@ -160,7 +180,7 @@ async function sendReply(
  * - onPartialToken(text): called per streaming token → sends/edits message with ▌ cursor
  * - deliver(payload): called once at end with full text → final clean edit (no cursor)
  */
-function createStreamingDeliver(
+export function createStreamingDeliver(
   account: ResolvedMaxAccount,
   chatId: string,
   dialogChatId: string,
@@ -206,6 +226,13 @@ function createStreamingDeliver(
   let planSealed = false;
   /** Consecutive edit failures, used to surface a stuck draft instead of silence. */
   let editFailures = 0;
+  /**
+   * Inbound sequence snapshot taken when the current draft was created.
+   * Initialized to "now" so the message that triggered this turn does not
+   * count as activity during work. Re-captured on every new draft, so each
+   * work segment gets a fresh "user wrote since" baseline.
+   */
+  let inboundSeqAtDraft = inboundSeqFor(account.accountId, chatId);
 
   const numericDialogChatId = parseInt(dialogChatId, 10);
   let typingInterval: ReturnType<typeof setInterval> | null = null;
@@ -279,6 +306,52 @@ function createStreamingDeliver(
 
   let creationPromise: Promise<void> | null = null;
 
+  /** True when the user wrote after the current draft was created. */
+  function draftIsBuried(): boolean {
+    return inboundSeqFor(account.accountId, chatId) > inboundSeqAtDraft;
+  }
+
+  /**
+   * Open a draft message and snapshot the inbound sequence at creation time.
+   * Every draft (start-of-turn, tool progress, plan, streaming) goes through
+   * here so the burial check always compares against the right baseline.
+   */
+  async function openDraft(body: string): Promise<string | null> {
+    const mid = await sendReply(account, chatId, chatType, body);
+    if (mid) {
+      messageId = mid;
+      inboundSeqAtDraft = inboundSeqFor(account.accountId, chatId);
+      lastEditAt = Date.now();
+    }
+    return mid;
+  }
+
+  /**
+   * Send the final answer as a brand-new message so it lands at the bottom of
+   * the chat, under everything the user wrote while the draft was alive.
+   * One retry on failure: when this runs after a successful draft deletion,
+   * a lost send would lose the answer entirely.
+   */
+  async function sendFinalFresh(
+    finalBody: string,
+    keyboardButtons: ReturnType<typeof resolvePayloadKeyboardButtons>,
+  ): Promise<void> {
+    let mid: string | null = null;
+    if (keyboardButtons && keyboardButtons.length > 0) {
+      const numericId = parseInt(chatId, 10);
+      const target = chatType === "direct" ? { user_id: numericId } : { chat_id: numericId };
+      const rendered = renderTaskList(finalBody);
+      mid = await sendMessageWithKeyboard(account.token, target, rendered, keyboardButtons);
+      if (!mid) mid = await sendMessageWithKeyboard(account.token, target, rendered, keyboardButtons);
+    } else {
+      mid = await sendReply(account, chatId, chatType, finalBody);
+      if (!mid) mid = await sendReply(account, chatId, chatType, finalBody);
+    }
+    if (!mid) {
+      log?.error?.(`[openclaw-max] Final answer send failed after draft deletion; answer lost`);
+    }
+  }
+
   /**
    * Turn one raw tool-activity line into a short, plain-text line.
    * MAX auto-generates link previews for anything that looks like a path or URL,
@@ -325,10 +398,8 @@ function createStreamingDeliver(
     if (messageId || creationPromise) return;
     startDraftDone = true;
     const attempt = (async () => {
-      const mid = await sendReply(account, chatId, chatType, renderProgress());
+      const mid = await openDraft(renderProgress());
       if (mid) {
-        messageId = mid;
-        lastEditAt = Date.now();
         log?.info?.(`[openclaw-max] Start draft created mid=${mid}`);
       } else {
         // Send failed: allow a later tool/answer event to retry the draft.
@@ -374,9 +445,8 @@ function createStreamingDeliver(
     if (!messageId) {
       if (!creationPromise) {
         creationPromise = (async () => {
-          messageId = await sendReply(account, chatId, chatType, renderProgress());
-          lastEditAt = Date.now();
-          log?.info?.(`[openclaw-max] Progress draft started mid=${messageId}`);
+          const mid = await openDraft(renderProgress());
+          log?.info?.(`[openclaw-max] Progress draft started mid=${mid}`);
         })();
       }
       await creationPromise;
@@ -420,9 +490,29 @@ function createStreamingDeliver(
 
   /** Close the current draft message and forget it, so the next answer opens a new one. */
   async function finalizeCurrentDraft(): Promise<void> {
+    if (pendingEdit) {
+      clearTimeout(pendingEdit);
+      pendingEdit = null;
+    }
     // When the message already holds a delivered answer, leave it as-is.
     if (messageId && accumulated && !answerDelivered) {
-      await editMessage(account.token, messageId, renderTaskList(accumulated)).catch(() => {});
+      // A partial answer frozen mid-turn gets the same burial treatment as a
+      // final one: if the user wrote while it streamed, move it to the bottom.
+      let sentFresh = false;
+      if (draftIsBuried()) {
+        const oldId = messageId;
+        messageId = null; // detach before deleting: no late edit may touch it
+        if (await deleteMessage(account.token, oldId)) {
+          sentFresh = true;
+        } else {
+          messageId = oldId; // deletion failed → keep it and edit in place
+        }
+      }
+      if (sentFresh) {
+        await sendFinalFresh(accumulated, null);
+      } else if (messageId) {
+        await editMessage(account.token, messageId, renderTaskList(accumulated)).catch(() => {});
+      }
     }
     messageId = null;
     accumulated = "";
@@ -486,9 +576,8 @@ function createStreamingDeliver(
     if (!messageId) {
       if (!creationPromise) {
         creationPromise = (async () => {
-          messageId = await sendReply(account, chatId, chatType, renderProgress());
-          lastEditAt = Date.now();
-          log?.info?.(`[openclaw-max] Plan draft created mid=${messageId}`);
+          const mid = await openDraft(renderProgress());
+          log?.info?.(`[openclaw-max] Plan draft created mid=${mid}`);
         })();
       }
       await creationPromise;
@@ -529,9 +618,8 @@ function createStreamingDeliver(
     if (!messageId) {
       if (!creationPromise) {
         creationPromise = (async () => {
-          messageId = await sendReply(account, chatId, chatType, streamBody(accumulated));
-          lastEditAt = Date.now();
-          log?.info?.(`[openclaw-max] Streaming started mid=${messageId}`);
+          const mid = await openDraft(streamBody(accumulated));
+          log?.info?.(`[openclaw-max] Streaming started mid=${mid}`);
         })();
       }
       await creationPromise;
@@ -549,6 +637,10 @@ function createStreamingDeliver(
     }
     const finalText = payload?.text ?? payload?.body ?? accumulated;
     if (!finalText) return;
+
+    // A repeated final callback for the answer already delivered must not
+    // duplicate it (neither as an edit nor as a fresh message).
+    if (answerDelivered && finalText.trim() === accumulated.trim()) return;
 
     // Steering can make one run emit several final blocks; each gets its own
     // message instead of editing over the previous answer.
@@ -571,16 +663,28 @@ function createStreamingDeliver(
     }
 
     if (messageId) {
-      // If we have inline buttons, edit with buttons
-      await editMessage(account.token, messageId, renderTaskList(finalBody), keyboardButtons ? [toInlineKeyboardAttachment(keyboardButtons)] : undefined);
-    } else {
-      if (keyboardButtons && keyboardButtons.length > 0) {
-        const numericId = parseInt(chatId, 10);
-        const target = chatType === "direct" ? { user_id: numericId } : { chat_id: numericId };
-        await sendMessageWithKeyboard(account.token, target, renderTaskList(finalBody), keyboardButtons);
-      } else {
-        await sendReply(account, chatId, chatType, finalBody);
+      // The user wrote while this draft was alive: editing in place would
+      // leave the answer buried above their messages. Delete the draft and
+      // re-send the final at the bottom. If deletion fails, edit in place —
+      // a buried answer beats a lost or duplicated one.
+      let sentFresh = false;
+      if (draftIsBuried()) {
+        const oldId = messageId;
+        messageId = null; // detach first: no late edit may resurrect the mid
+        if (await deleteMessage(account.token, oldId)) {
+          sentFresh = true;
+        } else {
+          messageId = oldId; // deletion failed → fall back to editing in place
+        }
       }
+      if (sentFresh) {
+        await sendFinalFresh(finalBody, keyboardButtons);
+      } else if (messageId) {
+        // If we have inline buttons, edit with buttons
+        await editMessage(account.token, messageId, renderTaskList(finalBody), keyboardButtons ? [toInlineKeyboardAttachment(keyboardButtons)] : undefined);
+      }
+    } else {
+      await sendFinalFresh(finalBody, keyboardButtons);
     }
 
     // Remember what this message now shows, so a following block is detected as
@@ -614,6 +718,9 @@ async function deliverMessage(
     images,
     files,
   } = msg;
+  // Count this inbound message so any live draft can detect that the user
+  // wrote during work (the "buried final answer" fix).
+  bumpInboundSeq(accountId, chatId);
   const rt = getMaxRuntime();
   const targetAddress = chatType === "direct" ? `max:${senderId}` : `max:group:${chatId}`;
   let agentId = accountId;
