@@ -49,6 +49,33 @@ openclaw gateway restart
 openclaw channels status
 ```
 
+### Optional: interface language (v1.2.0+)
+
+The bot interface is Russian by default. Set `language: "en"` in
+`channels.max` to switch all user-facing strings (progress draft, buttons,
+command menu, settings menus, forward/reply/attachment markers) to English.
+A per-account `accounts.<id>.language` overrides the channel-level value;
+invalid values fall back to `"ru"`.
+
+```json5
+{
+  channels: {
+    max: {
+      token: "YOUR_MAX_BOT_TOKEN",
+      language: "en",            // "ru" (default) | "en"
+      accounts: {
+        work: { token: "WORK_TOKEN", language: "ru" }  // per-account override
+      }
+    }
+  }
+}
+```
+
+In `ru` mode the attachment marker stays `[📎 Файл: … — путь: …]`
+(byte-identical to older versions); in `en` mode it becomes
+`[📎 File: … — path: …]`. If your agent prompts or local conventions parse
+these markers, keep the account on `ru` or update the parsers.
+
 ---
 
 ## 3. Critical Gotchas (Why bots fail or stay silent)

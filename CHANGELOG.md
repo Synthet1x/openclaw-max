@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.2.0] - 2026-11-20
+
+### Added
+- **Switchable interface language (ru/en).** New `language` option in
+  `channels.max` (`"ru"` | `"en"`, default `"ru"`) with a per-account override
+  in `channels.max.accounts.<id>.language`. All user-facing strings — the
+  "⏳ Работаю…" progress draft, attachment/forward/reply markers, keyboard
+  buttons, the bot command menu, settings menus (/reasoning, /fast, /verbose,
+  /usage, /tts, /elevated, /tools), the /think menu, the pairing approval DM
+  and the owner-only warning — now come from a single i18n module
+  (`src/i18n.ts`, 59 keys per language). Both inbound and outbound paths
+  resolve the language through the same resolved account, so one account
+  always speaks one language. Invalid values fall back to `"ru"`.
+- Russian strings in `ru` mode are byte-identical to 1.1.1 (including the
+  `[📎 Файл: … — путь: …]` attachment marker local agent conventions rely on).
+  The mixed-language /think menu title is now fully Russian in `ru` mode and
+  fully English in `en` mode.
+- `test/i18n-check.mjs`: key-set parity, language resolution, per-account
+  override and byte-identity checks (now part of `npm test`).
+
+### Notes
+- Command keyboards built by the core (/commands, /models pagination) receive
+  no account context from OpenClaw, so they use the channel-level `language`.
+- No behaviour change in the default `ru` mode.
+
+---
+
 ## [1.1.1] - 2026-11-12
 
 ### Fixed

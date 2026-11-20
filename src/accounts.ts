@@ -2,7 +2,8 @@
  * Account config resolution for the MAX channel plugin.
  */
 
-import type { MaxConfig, ResolvedMaxAccount } from "./types.js";
+import type { MaxAccountConfig, MaxConfig, ResolvedMaxAccount } from "./types.js";
+import { resolveLang } from "./i18n.js";
 
 export const DEFAULT_ACCOUNT_ID = "default";
 export const DEFAULT_WEBHOOK_PATH = "/max/webhook";
@@ -46,6 +47,8 @@ export function resolveAccount(
     allowFrom: normalizeAllowFrom(merged.allowFrom),
     httpProxy: merged.httpProxy?.trim() || undefined,
     progress: merged.progress !== false,
+    // Single resolution point: per-account override → channel-level → "ru".
+    language: resolveLang((perAccount as MaxAccountConfig).language, maxCfg.language),
   };
 }
 

@@ -6,7 +6,7 @@
   ],
   "name": "MAX",
   "description": "MAX messenger (max.ru) channel plugin for OpenClaw with document/media attachments, long-polling and webhook voice messaging",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "configSchema": {
     "type": "object",
     "additionalProperties": true,
@@ -47,6 +47,12 @@
           },
           "httpProxy": {
             "type": "string"
+          },
+          "language": {
+            "type": "string",
+            "enum": ["ru", "en"],
+            "default": "ru",
+            "description": "Interface language: ru (default) or en. Per-account override supported."
           },
           "accounts": {
             "type": "object",
@@ -122,6 +128,12 @@
           "progress": {
             "type": "boolean",
             "description": "Show a live 'working' draft with tool activity while the agent runs (like Telegram progress mode)."
+          },
+          "language": {
+            "type": "string",
+            "enum": ["ru", "en"],
+            "default": "ru",
+            "description": "Interface language: ru (default) or en. Per-account override supported."
           }
         },
         "additionalProperties": true
@@ -162,6 +174,10 @@
         "progress": {
           "label": "Live Progress Draft",
           "help": "Show an editable 'working' status message with tool activity, similar to Telegram."
+        },
+        "language": {
+          "label": "Language",
+          "help": "Interface language: ru (default) or en. Per-account override supported."
         }
       }
     }

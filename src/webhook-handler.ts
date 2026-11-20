@@ -20,6 +20,7 @@ import type {
   WebhookDeliverMsg,
 } from "./types.js";
 import { downloadFile, getMessage, sendMessageWithKeyboard } from "./client.js";
+import { t, type Lang } from "./i18n.js";
 
 const MAX_BODY_BYTES = 10 * 1024 * 1024; // 10 MB
 
@@ -199,7 +200,7 @@ function userDisplayName(user?: MaxUser): string | null {
  * Unwrap MAX msg.link (forward/reply).
  * Pure forwards arrive with empty body.text/attachments — content lives in link.message.
  */
-function unwrapLink(msg: MaxMessage) {
+function unwrapLink(msg: MaxMessage, lang: Lang = "ru") {
   const link = msg?.link;
   if (!link || typeof link !== "object") {
     return {
@@ -230,25 +231,25 @@ function unwrapLink(msg: MaxMessage) {
 
   let prefix = "";
   if (isForwarded) {
-    const who = originalSenderName || originalSenderId || "неизвестный";
+    const who = originalSenderName || originalSenderId || t(lang, "unknownSender");
     const idPart = originalSenderId ? ` (id ${originalSenderId})` : "";
-    prefix = `[↪ Переслано от ${who}${idPart}]`;
+    prefix = t(lang, "forwardPrefix", { who, idPart });
     if (linkedText) {
       prefix += `\n${linkedText}`;
     }
   } else if (isReply) {
-    const who = originalSenderName || originalSenderId || "сообщение";
+    const who = originalSenderName || originalSenderId || t(lang, "replyWhoFallback");
     const quote = linkedText
       ? linkedText.length > 500
         ? linkedText.slice(0, 500) + "…"
         : linkedText
       : linkedAttachments.length > 0
-        ? `(вложение: ${linkedAttachments.map((a) => a.type).join(", ")})`
+        ? t(lang, "attachmentQuote", { types: linkedAttachments.map((a) => a.type).join(", ") })
         : "";
     if (quote) {
-      prefix = `[↩ Ответ на ${who}: ${quote}]`;
+      prefix = t(lang, "replyPrefixQuoted", { who, quote });
     } else {
-      prefix = `[↩ Ответ на ${who}]`;
+      prefix = t(lang, "replyPrefix", { who });
     }
   }
 
@@ -591,93 +592,95 @@ function getSessionModelInfo(accountId: string, peerId: string, dialogChatId?: s
   return { provider: defaultProvider, model: defaultModel, thinkingLevel: defaultThinking };
 }
 
-const INTERACTIVE_COMMAND_MENUS: Record<string, { title: string; buttons: Array<Array<{ type: "callback"; text: string; payload: string }>> }> = {
-  "/reasoning": {
-    title: "Настройка показа хода мыслей (reasoning):",
-    buttons: [
-      [
-        { type: "callback", text: "Вкл (on)", payload: "/reasoning on" },
-        { type: "callback", text: "Выкл (off)", payload: "/reasoning off" },
+function interactiveCommandMenus(lang: Lang): Record<string, { title: string; buttons: Array<Array<{ type: "callback"; text: string; payload: string }>> }> {
+  return {
+    "/reasoning": {
+      title: t(lang, "menuReasoningTitle"),
+      buttons: [
+        [
+          { type: "callback", text: t(lang, "btnOn"), payload: "/reasoning on" },
+          { type: "callback", text: t(lang, "btnOff"), payload: "/reasoning off" },
+        ],
+        [
+          { type: "callback", text: t(lang, "btnStream"), payload: "/reasoning stream" },
+        ]
       ],
-      [
-        { type: "callback", text: "Потоково (stream)", payload: "/reasoning stream" },
-      ]
-    ],
-  },
-  "/fast": {
-    title: "Режим Fast Mode:",
-    buttons: [
-      [
-        { type: "callback", text: "Вкл (on)", payload: "/fast on" },
-        { type: "callback", text: "Выкл (off)", payload: "/fast off" },
+    },
+    "/fast": {
+      title: t(lang, "menuFastTitle"),
+      buttons: [
+        [
+          { type: "callback", text: t(lang, "btnOn"), payload: "/fast on" },
+          { type: "callback", text: t(lang, "btnOff"), payload: "/fast off" },
+        ],
+        [
+          { type: "callback", text: t(lang, "btnAuto"), payload: "/fast auto" },
+          { type: "callback", text: t(lang, "btnDefault"), payload: "/fast default" },
+        ],
+        [
+          { type: "callback", text: t(lang, "btnStatus"), payload: "/fast status" },
+        ]
       ],
-      [
-        { type: "callback", text: "Авто (auto)", payload: "/fast auto" },
-        { type: "callback", text: "По умолчанию", payload: "/fast default" },
+    },
+    "/verbose": {
+      title: t(lang, "menuVerboseTitle"),
+      buttons: [
+        [
+          { type: "callback", text: "Off", payload: "/verbose off" },
+          { type: "callback", text: "On", payload: "/verbose on" },
+          { type: "callback", text: "Full", payload: "/verbose full" },
+        ]
       ],
-      [
-        { type: "callback", text: "Статус", payload: "/fast status" },
-      ]
-    ],
-  },
-  "/verbose": {
-    title: "Подробный режим вывода (verbose):",
-    buttons: [
-      [
-        { type: "callback", text: "Off", payload: "/verbose off" },
-        { type: "callback", text: "On", payload: "/verbose on" },
-        { type: "callback", text: "Full", payload: "/verbose full" },
-      ]
-    ],
-  },
-  "/usage": {
-    title: "Отображение расхода токенов (usage footer):",
-    buttons: [
-      [
-        { type: "callback", text: "Off", payload: "/usage off" },
-        { type: "callback", text: "Tokens", payload: "/usage tokens" },
+    },
+    "/usage": {
+      title: t(lang, "menuUsageTitle"),
+      buttons: [
+        [
+          { type: "callback", text: "Off", payload: "/usage off" },
+          { type: "callback", text: "Tokens", payload: "/usage tokens" },
+        ],
+        [
+          { type: "callback", text: "Full", payload: "/usage full" },
+          { type: "callback", text: "Cost", payload: "/usage cost" },
+        ]
       ],
-      [
-        { type: "callback", text: "Full", payload: "/usage full" },
-        { type: "callback", text: "Cost", payload: "/usage cost" },
-      ]
-    ],
-  },
-  "/tts": {
-    title: "Управление озвучкой (TTS):",
-    buttons: [
-      [
-        { type: "callback", text: "Вкл (on)", payload: "/tts on" },
-        { type: "callback", text: "Выкл (off)", payload: "/tts off" },
+    },
+    "/tts": {
+      title: t(lang, "menuTtsTitle"),
+      buttons: [
+        [
+          { type: "callback", text: t(lang, "btnOn"), payload: "/tts on" },
+          { type: "callback", text: t(lang, "btnOff"), payload: "/tts off" },
+        ],
+        [
+          { type: "callback", text: t(lang, "btnStatus"), payload: "/tts status" },
+        ]
       ],
-      [
-        { type: "callback", text: "Статус", payload: "/tts status" },
-      ]
-    ],
-  },
-  "/elevated": {
-    title: "Режим повышенных привилегий (elevated):",
-    buttons: [
-      [
-        { type: "callback", text: "Off", payload: "/elevated off" },
-        { type: "callback", text: "On", payload: "/elevated on" },
+    },
+    "/elevated": {
+      title: t(lang, "menuElevatedTitle"),
+      buttons: [
+        [
+          { type: "callback", text: "Off", payload: "/elevated off" },
+          { type: "callback", text: "On", payload: "/elevated on" },
+        ],
+        [
+          { type: "callback", text: "Ask", payload: "/elevated ask" },
+          { type: "callback", text: "Full", payload: "/elevated full" },
+        ]
       ],
-      [
-        { type: "callback", text: "Ask", payload: "/elevated ask" },
-        { type: "callback", text: "Full", payload: "/elevated full" },
-      ]
-    ],
-  },
-  "/tools": {
-    title: "Режим отображения списка инструментов:",
-    buttons: [
-      [
-        { type: "callback", text: "Компактный (compact)", payload: "/tools compact" },
-        { type: "callback", text: "Подробный (verbose)", payload: "/tools verbose" },
-      ]
-    ],
-  },
-};
+    },
+    "/tools": {
+      title: t(lang, "menuToolsTitle"),
+      buttons: [
+        [
+          { type: "callback", text: t(lang, "btnCompact"), payload: "/tools compact" },
+          { type: "callback", text: t(lang, "btnVerbose"), payload: "/tools verbose" },
+        ]
+      ],
+    },
+  };
+}
 
 export async function handleUpdate(
   update: MaxUpdate,
@@ -737,7 +740,7 @@ export async function handleUpdate(
     return;
   }
 
-  const linkInfo = unwrapLink(msg);
+  const linkInfo = unwrapLink(msg, account.language);
 
   // «Чистый» форвард: в вебхуке нет ни текста, ни вложений — добираем оригинал по mid.
   // ВАЖНО: link.message.mid — внутренний mid из чужого чата, API отдаёт на него 404.
@@ -859,7 +862,7 @@ export async function handleUpdate(
   if (isAdminCmd && !isOwner) {
     log?.warn?.(`[openclaw-max] Restricted non-owner user ${senderId} attempted admin command: ${cleanCmd}`);
     import("./client.js").then(({ sendDm, sendToChat }) => {
-      const warning = "⚠️ Команда доступна только владельцу бота (Owner). Для изменения прав обратитесь к администратору.";
+      const warning = t(account.language, "ownerOnlyWarning");
       if (chatType === "direct") {
         sendDm(account.token, Number(senderId), warning);
       } else {
@@ -894,7 +897,7 @@ export async function handleUpdate(
       }
       if (row.length > 0) rows.push(row);
 
-      const title = `Current thinking level: ${cur}.\nМодель: ${info.model} (${info.provider})\nВыберите уровень размышлений:`;
+      const title = t(account.language, "thinkMenuTitle", { level: cur, model: info.model, provider: info.provider });
       const recipient = chatType === "direct" ? { user_id: Number(senderId) } : { chat_id: Number(dialogChatId) };
       await sendMessageWithKeyboard(account.token, recipient, title, rows);
       return;
@@ -903,7 +906,7 @@ export async function handleUpdate(
     }
   }
 
-  const menuConfig = INTERACTIVE_COMMAND_MENUS[cleanCmd];
+  const menuConfig = interactiveCommandMenus(account.language)[cleanCmd];
   if (menuConfig && allAttachments.length === 0) {
     log?.info?.(`[openclaw-max] Showing interactive menu for ${cleanCmd} to chat ${chatId}`);
     try {

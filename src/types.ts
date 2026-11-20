@@ -3,6 +3,8 @@
  * https://dev.max.ru/docs-api
  */
 
+import type { Lang } from "./i18n.js";
+
 // ─── Config ───────────────────────────────────────────────────────────────────
 
 export interface MaxAccountConfig {
@@ -35,6 +37,8 @@ export interface MaxAccountConfig {
    * Useful when the gateway has no direct route to platform-api2.max.ru.
    */
   httpProxy?: string;
+  /** Interface language: "ru" (default) or "en". Per-account override supported. */
+  language?: Lang;
 }
 
 export interface MaxConfig extends MaxAccountConfig {
@@ -56,6 +60,8 @@ export interface ResolvedMaxAccount {
   httpProxy?: string;
   /** Show a live 'working' draft with tool activity (like Telegram progress mode). */
   progress?: boolean;
+  /** Resolved interface language (account override → channel config → "ru"). */
+  language: Lang;
 }
 
 // ─── API objects ──────────────────────────────────────────────────────────────

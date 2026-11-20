@@ -48,6 +48,7 @@ import {
   type CorePlanStep,
 } from "./plan.js";
 import type { ResolvedMaxAccount, WebhookDeliverMsg } from "./types.js";
+import { t, resolveLang, DEFAULT_LANG, type Lang } from "./i18n.js";
 
 const CHANNEL_ID = "max";
 
@@ -117,6 +118,10 @@ const MaxAccountSchema = z
       .optional()
       .default(true)
       .describe("Show a live 'working' draft with tool activity (like Telegram)"),
+    language: z
+      .enum(["ru", "en"])
+      .optional()
+      .describe("Interface language: ru (default) or en. Per-account override supported."),
   })
   .passthrough();
 
@@ -149,6 +154,21 @@ function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/**
+ * Language for command keyboards built by the core (/commands, /models).
+ * The core passes no account context to these builders, so they use the
+ * channel-level language from the current runtime config (default "ru").
+ */
+function commandsLang(): Lang {
+  try {
+    const rt = getMaxRuntime();
+    const cfg = typeof rt.config?.current === "function" ? rt.config.current() : null;
+    return resolveLang(undefined, cfg?.channels?.max?.language);
+  } catch {
+    return DEFAULT_LANG;
+  }
 }
 
 /** Minimum interval between streaming edits (ms) to avoid rate limits */
@@ -363,7 +383,7 @@ export function createStreamingDeliver(
     if (!line) return "";
     // Strip protocol URLs down to their host first (before path collapsing).
     line = line.replace(/https?:\/\/([^\s/]+)\S*/g, "$1");
-    // Replace long filesystem paths (~/..., /home/..., ./...) with the last segment.
+    // Replace long filesystem paths (home dirs, absolute, relative) with the last segment.
     line = line.replace(/(?:~|\/|\.\/)[\w.@-]*\/([\w.@-]+)/g, "$1");
     // Remove characters MAX may treat as link anchors.
     line = line.replace(/[<>]/g, "");
@@ -383,8 +403,8 @@ export function createStreamingDeliver(
     // instead of a wall of tool names.
     if (animator) return animator.render(planHeader);
     const lines = progressLines.slice(-6);
-    if (lines.length === 0) return "⏳ Работаю…";
-    return ["⏳ Работаю…", "", ...lines].join("\n");
+    if (lines.length === 0) return t(account.language, "working");
+    return [t(account.language, "working"), "", ...lines].join("\n");
   }
 
   /**
@@ -733,9 +753,17 @@ async function deliverMessage(
   if (!agentId || agentId === "default") agentId = (accountId === "orli") ? "orli" : "iri";
   const sessionKey = `agent:${agentId}:${targetAddress}`;
 
+  const lang = account.language;
   const fileLines = (files ?? []).map((f) => {
-    const fwd = f.isForwarded ? "переслано, " : "";
-    return `[📎 Файл: ${f.filename} (${fwd}${f.attachmentType || "?"}, ${formatBytes(f.size)}, ${f.mimeType}) — путь: ${f.path}]`;
+    const fwd = f.isForwarded ? t(lang, "fileForwarded") : "";
+    return t(lang, "fileMarker", {
+      filename: f.filename,
+      forwarded: fwd,
+      type: f.attachmentType || "?",
+      size: formatBytes(f.size),
+      mime: f.mimeType,
+      path: f.path,
+    });
   });
 
   const fullText = [...fileLines, text].filter(Boolean).join("\n");
@@ -883,11 +911,12 @@ export function createMaxPlugin(): any {
       nativeSkillsAutoEnabled: true,
       buildCommandsListChannelData: (params: { currentPage: number; totalPages: number; agentId?: string }) => {
         if (params.totalPages <= 1) return null;
+        const lang = commandsLang();
         const buttons: any[] = [];
         if (params.currentPage > 1) {
           buttons.push({
             type: "callback",
-            text: "◀ Пред",
+            text: t(lang, "prevPage"),
             payload: `/commands ${params.currentPage - 1}`,
           });
         }
@@ -899,7 +928,7 @@ export function createMaxPlugin(): any {
         if (params.currentPage < params.totalPages) {
           buttons.push({
             type: "callback",
-            text: "След ▶",
+            text: t(lang, "nextPage"),
             payload: `/commands ${params.currentPage + 1}`,
           });
         }
@@ -963,12 +992,13 @@ export function createMaxPlugin(): any {
         modelNames?: Map<string, string>;
       }) => {
         const { provider, models, currentModel, currentPage, totalPages, modelNames, pageSize = 8 } = params;
+        const lang = commandsLang();
         const rows: any[][] = [];
         if (!models || models.length === 0) {
           return {
             max: {
               buttons: [
-                [{ type: "callback", text: "« Назад к провайдерам", payload: "/models" }]
+                [{ type: "callback", text: t(lang, "backToProviders"), payload: "/models" }]
               ]
             }
           };
@@ -999,7 +1029,7 @@ export function createMaxPlugin(): any {
           if (currentPage > 1) {
             paginationRow.push({
               type: "callback",
-              text: "◀ Пред",
+              text: t(lang, "prevPage"),
               payload: `/models ${provider} ${currentPage - 1}`,
             });
           }
@@ -1011,7 +1041,7 @@ export function createMaxPlugin(): any {
           if (currentPage < totalPages) {
             paginationRow.push({
               type: "callback",
-              text: "След ▶",
+              text: t(lang, "nextPage"),
               payload: `/models ${provider} ${currentPage + 1}`,
             });
           }
@@ -1022,7 +1052,7 @@ export function createMaxPlugin(): any {
         rows.push([
           {
             type: "callback",
-            text: "« Назад к провайдерам",
+            text: t(lang, "backToProviders"),
             payload: "/models",
           }
         ]);
@@ -1037,7 +1067,7 @@ export function createMaxPlugin(): any {
         return {
           max: {
             buttons: [
-              [{ type: "callback", text: "Выбрать модель", payload: "/models" }]
+              [{ type: "callback", text: t(commandsLang(), "chooseModel"), payload: "/models" }]
             ]
           }
         };
@@ -1091,7 +1121,7 @@ export function createMaxPlugin(): any {
         if (!account.token) return;
         const numericId = parseInt(id, 10);
         if (!isNaN(numericId)) {
-          await sendDm(account.token, numericId, "✅ OpenClaw: доступ разрешён.");
+          await sendDm(account.token, numericId, t(account.language, "accessGranted"));
         }
       },
     },
@@ -1202,7 +1232,7 @@ export function createMaxPlugin(): any {
 
         if (!mid) {
           // Text-only fallback so the turn still delivers something.
-          const fallbackText = text || `[вложение: ${filename ?? mediaType}]`;
+          const fallbackText = text || t(account.language, "attachmentFallback", { name: filename ?? mediaType });
           const renderedFallback = renderTaskList(fallbackText);
           mid = isDirect
             ? await sendDm(account.token, numericId, renderedFallback)
@@ -1243,33 +1273,33 @@ export function createMaxPlugin(): any {
 
           // Register bot commands menu in MAX Bot API so users see popup menu when typing /
           const defaultCommands = [
-            { name: "models", description: "Выбор и переключение моделей" },
-            { name: "model", description: "Текущая модель или смена (/model provider/model)" },
-            { name: "new", description: "Начать новую сессию" },
-            { name: "status", description: "Статус бота, агента и контекста" },
-            { name: "help", description: "Справка по всем командам" },
-            { name: "commands", description: "Полный список команд" },
-            { name: "tools", description: "Список доступных инструментов" },
-            { name: "compact", description: "Сжать контекст диалога" },
-            { name: "think", description: "Глубина размышлений (off/low/medium/high)" },
-            { name: "reset", description: "Сбросить текущую сессию" },
-            { name: "stop", description: "Остановить текущую генерацию" },
-            { name: "restart", description: "Перезапустить OpenClaw" },
-            { name: "usage", description: "Расход токенов и статистика" },
-            { name: "tts", description: "Управление озвучкой (TTS)" },
-            { name: "voice", description: "Выбор голоса для озвучки" },
-            { name: "fast", description: "Режим Fast mode (вкл/выкл)" },
-            { name: "reasoning", description: "Показ хода мыслей (вкл/выкл)" },
-            { name: "verbose", description: "Подробный режим вывода" },
-            { name: "whoami", description: "Показать мой ID в мессенджере" },
-            { name: "context", description: "Информация о текущем контексте" },
-            { name: "tasks", description: "Список фоновых задач" },
-            { name: "subagents", description: "Запущенные субагенты" },
-            { name: "skills", description: "Список доступных навыков" },
-            { name: "weather", description: "Погода и прогноз" },
-            { name: "humanizer", description: "Очеловечивание текстов" },
-            { name: "notion", description: "Интеграция с Notion" },
-            { name: "gog", description: "Google Workspace (диск, почта, календари)" },
+            { name: "models", description: t(account.language, "cmdModels") },
+            { name: "model", description: t(account.language, "cmdModel") },
+            { name: "new", description: t(account.language, "cmdNew") },
+            { name: "status", description: t(account.language, "cmdStatus") },
+            { name: "help", description: t(account.language, "cmdHelp") },
+            { name: "commands", description: t(account.language, "cmdCommands") },
+            { name: "tools", description: t(account.language, "cmdTools") },
+            { name: "compact", description: t(account.language, "cmdCompact") },
+            { name: "think", description: t(account.language, "cmdThink") },
+            { name: "reset", description: t(account.language, "cmdReset") },
+            { name: "stop", description: t(account.language, "cmdStop") },
+            { name: "restart", description: t(account.language, "cmdRestart") },
+            { name: "usage", description: t(account.language, "cmdUsage") },
+            { name: "tts", description: t(account.language, "cmdTts") },
+            { name: "voice", description: t(account.language, "cmdVoice") },
+            { name: "fast", description: t(account.language, "cmdFast") },
+            { name: "reasoning", description: t(account.language, "cmdReasoning") },
+            { name: "verbose", description: t(account.language, "cmdVerbose") },
+            { name: "whoami", description: t(account.language, "cmdWhoami") },
+            { name: "context", description: t(account.language, "cmdContext") },
+            { name: "tasks", description: t(account.language, "cmdTasks") },
+            { name: "subagents", description: t(account.language, "cmdSubagents") },
+            { name: "skills", description: t(account.language, "cmdSkills") },
+            { name: "weather", description: t(account.language, "cmdWeather") },
+            { name: "humanizer", description: t(account.language, "cmdHumanizer") },
+            { name: "notion", description: t(account.language, "cmdNotion") },
+            { name: "gog", description: t(account.language, "cmdGog") },
           ];
           await setMyCommands(account.token, defaultCommands).catch(() => {});
         } catch (err) {

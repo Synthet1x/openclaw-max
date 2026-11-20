@@ -198,6 +198,35 @@ Should show: `MAX default: enabled, dm:allowlist, allow:YOUR_USER_ID`
 | `webhookUrl` | string | — | Webhook URL (optional; required for voice notes; uses long polling if omitted) |
 | `webhookSecret` | string | — | Webhook secret for request verification |
 | `httpProxy` | string | — | Optional HTTP(S) proxy for MAX API traffic, e.g. `http://user:pass@host:port` |
+| `language` | string | `"ru"` | Interface language: `"ru"` or `"en"`. Per-account override via `accounts.<id>.language` |
+
+### Interface language
+
+Russian is the default. To switch the whole bot interface (progress draft,
+buttons, command menu, settings menus, forward/reply/attachment markers) to
+English:
+
+```json5
+{
+  channels: {
+    max: {
+      token: "YOUR_BOT_TOKEN_HERE",
+      language: "en",              // channel-wide: "ru" (default) | "en"
+      accounts: {
+        work: {
+          token: "WORK_BOT_TOKEN",
+          language: "ru"           // per-account override wins over channel-level
+        }
+      }
+    }
+  }
+}
+```
+
+Invalid values fall back to `"ru"`. In `ru` mode all strings are byte-identical
+to previous versions (including the `[📎 Файл: … — путь: …]` attachment
+marker). In `en` mode the markers become `[📎 File: … — path: …]`,
+`[↪ Forwarded from …]`, `[↩ Reply to …]`, `[attachment: …]`.
 
 ## License
 
