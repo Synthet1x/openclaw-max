@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.2.1] - 2026-11-24
+
+### Security
+- **Scoped Russian CA trust to a MAX-host allowlist.** The embedded Russian
+  Trusted CA (Минцифры) + default roots dispatcher is now used ONLY for MAX
+  infrastructure hosts: `max.ru` and subdomains (incl. `platform-api2.max.ru`,
+  `botapi.max.ru`), `oneme.ru` and subdomains (file/image upload endpoints
+  `fu.oneme.ru`, `iu.oneme.ru`), `okcdn.ru` and subdomains (audio/video upload
+  endpoints `omu.okcdn.ru`, `omub.okcdn.ru`). All other destinations — including
+  variable attachment download/upload URLs outside the allowlist — use a
+  standard dispatcher with the default root store only. Matching is
+  exact-apex or dot-boundary suffix (`evilmax.ru`, `max.ru.attacker.com` never
+  match). Addresses the medium review finding on openclaw/clawhub#4861.
+- **Redirect safety.** All client requests now disable automatic redirects and
+  follow them manually (`fetchWithScopedTrust`), re-selecting the dispatcher
+  for every hop, so a redirect can never carry the extended CA trust to a
+  non-MAX host. `Authorization` is dropped on cross-origin redirects, 303 (and
+  301/302 on POST) become bodyless GETs, only http/https locations are
+  followed, and redirect chains are capped at 5.
+- The `httpProxy` option keeps working: the proxy applies to both dispatchers,
+  while the extended CA trust stays scoped to MAX hosts.
+
+### Added
+- `test/ca-scope.test.mjs`: allowlist matching, per-host dispatcher selection
+  (direct and proxy modes), and redirect-safety checks against local HTTP
+  servers (cross-origin credential drop, same-origin keep, 303 semantics,
+  loop and non-HTTP rejection). Part of `npm test`.
+
+---
+
 ## [1.2.0] - 2026-11-20
 
 ### Added

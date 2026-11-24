@@ -4,9 +4,12 @@
  *
  * The MAX Bot API moved off platform-api.max.ru (decommissioned 2026-07-19) to
  * platform-api2.max.ru, whose TLS chain is anchored on the Russian Trusted Root
- * CA (Минцифры) — absent from Node's bundled CA store. We therefore route every
- * request through a dedicated undici dispatcher that trusts that CA in addition
- * to the platform defaults, and optionally through an HTTP(S) proxy.
+ * CA (Минцифры) — absent from Node's bundled CA store. We therefore trust that
+ * CA in addition to the platform defaults, but ONLY for MAX infrastructure
+ * hosts (see MAX_INFRA_DOMAINS). Every other destination uses a standard
+ * dispatcher with the default root store, and redirects are followed manually
+ * so the extended trust can never leak to an arbitrary host via a redirect.
+ * An optional HTTP(S) proxy applies to both dispatchers.
  */
 
 import tls from "node:tls";
@@ -22,23 +25,125 @@ const MAX_API = "https://platform-api2.max.ru";
 const REQUEST_TIMEOUT_MS = 30_000;
 const LONG_POLL_TIMEOUT_SEC = 30;
 
-// ─── TLS / proxy transport ────────────────────────────────────────────────────
+// ─── TLS / proxy transport (scoped CA trust) ─────────────────────────────────
 
-// Trust the Минцифры CA on top of the default root store.
+// Trust the Минцифры CA on top of the default root store — but only on the
+// MAX-scoped dispatcher below, never on the default one.
 const MAX_CA: string[] = [RUSSIAN_TRUSTED_CA, ...tls.rootCertificates];
 
-let dispatcher: Dispatcher = new Agent({ connect: { ca: MAX_CA } });
+/**
+ * Allowlist of MAX infrastructure domains (apex + any subdomain).
+ *
+ * - max.ru   — the MAX platform itself: platform-api2.max.ru (current Bot API),
+ *              botapi.max.ru (legacy), and any other platform subdomain.
+ * - oneme.ru — MAX media upload endpoints returned by POST /uploads:
+ *              fu.oneme.ru (type=file), iu.oneme.ru (type=image).
+ * - okcdn.ru — MAX audio/video upload endpoints returned by POST /uploads:
+ *              omu.okcdn.ru (type=audio), omub.okcdn.ru (type=video).
+ *
+ * Attachment download URLs are served from the same MAX media infrastructure.
+ * Hosts outside this list get the standard dispatcher (default root store only).
+ */
+export const MAX_INFRA_DOMAINS: readonly string[] = ["max.ru", "oneme.ru", "okcdn.ru"];
+
+/**
+ * True when `hostname` is a MAX infrastructure host (allowlist above).
+ * Matching is exact-apex or dot-boundary suffix, so `evilmax.ru` or
+ * `max.ru.attacker.com` never match. Exported for tests.
+ */
+export function isMaxInfraHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/\.+$/, "");
+  if (!host) return false;
+  return MAX_INFRA_DOMAINS.some((domain) => host === domain || host.endsWith(`.${domain}`));
+}
+
+// MAX-scoped dispatcher: default roots + Минцифры CA.
+let maxDispatcher: Dispatcher = new Agent({ connect: { ca: MAX_CA } });
+// Standard dispatcher for every non-MAX destination: default roots only.
+let defaultDispatcher: Dispatcher = new Agent();
 
 /**
  * (Re)configure the HTTP transport for MAX API calls.
  * Call once at channel startup. When `httpProxy` is set, requests are tunnelled
- * through it (fixes GitHub issue #1); the Минцифры CA is trusted either way.
+ * through it (fixes GitHub issue #1). The proxy applies to both dispatchers,
+ * but the extended CA trust stays scoped to MAX hosts either way.
  */
 export function configureMaxTransport(opts?: { httpProxy?: string }): void {
   const proxy = opts?.httpProxy?.trim();
-  dispatcher = proxy
-    ? new ProxyAgent({ uri: proxy, connect: { ca: MAX_CA } })
-    : new Agent({ connect: { ca: MAX_CA } });
+  if (proxy) {
+    maxDispatcher = new ProxyAgent({ uri: proxy, connect: { ca: MAX_CA } });
+    defaultDispatcher = new ProxyAgent({ uri: proxy });
+  } else {
+    maxDispatcher = new Agent({ connect: { ca: MAX_CA } });
+    defaultDispatcher = new Agent();
+  }
+}
+
+/**
+ * Pick the dispatcher for a URL: extended CA trust only for allowlisted MAX
+ * hosts, standard trust for everything else. Exported for tests.
+ */
+export function dispatcherForUrl(url: string | URL): Dispatcher {
+  const parsed = typeof url === "string" ? new URL(url) : url;
+  return isMaxInfraHost(parsed.hostname) ? maxDispatcher : defaultDispatcher;
+}
+
+// ─── Redirect-safe fetch ──────────────────────────────────────────────────────
+
+const MAX_REDIRECTS = 5;
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+
+/**
+ * fetch() with automatic redirects disabled and a manual redirect loop that
+ * re-selects the dispatcher for EVERY hop. A redirect from a MAX host to a
+ * non-MAX host therefore switches to the standard dispatcher — the extended
+ * CA trust cannot leak to an arbitrary destination. Authorization is dropped
+ * on any cross-origin redirect. Only http/https locations are followed.
+ * Exported for tests.
+ */
+export async function fetchWithScopedTrust(
+  url: string | URL,
+  init: Parameters<typeof fetch>[1] = {},
+): Promise<Awaited<ReturnType<typeof fetch>>> {
+  let current = new URL(url);
+  const originalOrigin = current.origin;
+  let method = (init.method ?? "GET").toUpperCase();
+  let body = init.body;
+  const headers = new Headers(init.headers);
+
+  for (let hop = 0; ; hop++) {
+    if (current.protocol !== "http:" && current.protocol !== "https:") {
+      throw new Error(`MAX client: refusing non-HTTP(S) URL ${current.protocol}//`);
+    }
+    const res = await fetch(current.toString(), {
+      ...init,
+      method,
+      body,
+      headers,
+      redirect: "manual",
+      dispatcher: dispatcherForUrl(current),
+    });
+    if (!REDIRECT_STATUSES.has(res.status)) return res;
+
+    const location = res.headers.get("location");
+    if (!location) return res;
+    if (hop >= MAX_REDIRECTS) {
+      throw new Error(`MAX client: too many redirects (>${MAX_REDIRECTS})`);
+    }
+    const next = new URL(location, current);
+    // Never carry credentials to a different origin.
+    if (next.origin !== originalOrigin) headers.delete("authorization");
+    // 303, and 301/302 on non-GET/HEAD, become bodyless GET (browser semantics).
+    if (res.status === 303 || ((res.status === 301 || res.status === 302) && method !== "GET" && method !== "HEAD")) {
+      method = "GET";
+      body = undefined;
+      headers.delete("content-type");
+      headers.delete("content-length");
+    }
+    // Drain the redirect body so the socket can be reused.
+    await res.arrayBuffer().catch(() => undefined);
+    current = next;
+  }
 }
 
 // ─── Low-level fetch helper ───────────────────────────────────────────────────
@@ -68,12 +173,11 @@ async function maxRequest<T>(
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
   try {
-    const res = await fetch(url.toString(), {
+    const res = await fetchWithScopedTrust(url.toString(), {
       method,
       headers,
       body: body !== undefined ? JSON.stringify(body) : undefined,
       signal: controller.signal,
-      dispatcher,
     });
 
     const text = await res.text();
@@ -216,11 +320,10 @@ export async function getUpdates(
     : AbortSignal.timeout((timeoutSec + 10) * 1000);
 
   try {
-    const res = await fetch(url.toString(), {
+    const res = await fetchWithScopedTrust(url.toString(), {
       method: "GET",
       headers: { Authorization: token },
       signal: combinedSignal,
-      dispatcher,
     });
 
     if (!res.ok) {
@@ -316,10 +419,7 @@ export async function downloadFile(token: string, url: string): Promise<Buffer |
       headers["Authorization"] = token;
     }
 
-    const res = await fetch(url, {
-      headers,
-      dispatcher,
-    });
+    const res = await fetchWithScopedTrust(url, { headers });
     if (!res.ok) return null;
     return Buffer.from(await res.arrayBuffer());
   } catch {
@@ -348,10 +448,9 @@ export async function uploadFile(uploadUrl: string, buffer: Buffer, mimeType: st
   try {
     const form = new FormData();
     form.append("data", new Blob([new Uint8Array(buffer)], { type: mimeType }), filename);
-    const res = await fetch(uploadUrl, {
+    const res = await fetchWithScopedTrust(uploadUrl, {
       method: "POST",
       body: form,
-      dispatcher,
     });
     if (!res.ok) return null;
     const json = await res.json() as Record<string, unknown>;
